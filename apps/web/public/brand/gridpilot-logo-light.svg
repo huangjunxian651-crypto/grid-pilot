@@ -1,0 +1,17 @@
+<svg width="200" height="48" viewBox="0 0 200 48" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="GridPilot">
+  <title>GridPilot</title>
+  <!-- ── 图标 mark（浅色，上升柱状） ── -->
+  <rect x="2" y="2" width="44" height="44" rx="13" fill="#ffffff"/>
+  <rect x="2" y="2" width="44" height="44" rx="13" fill="none" stroke="#0e8fa6" stroke-opacity="0.32" stroke-width="1"/>
+  <g fill="#0e8fa6">
+    <rect x="6.5" y="34" width="6.5" height="6.5" rx="2"/>
+    <rect x="16" y="34" width="6.5" height="6.5" rx="2"/><rect x="16" y="26" width="6.5" height="6.5" rx="2"/>
+    <rect x="25.5" y="34" width="6.5" height="6.5" rx="2"/><rect x="25.5" y="26" width="6.5" height="6.5" rx="2"/><rect x="25.5" y="18" width="6.5" height="6.5" rx="2"/>
+    <rect x="35" y="34" width="6.5" height="6.5" rx="2"/><rect x="35" y="26" width="6.5" height="6.5" rx="2"/><rect x="35" y="18" width="6.5" height="6.5" rx="2"/>
+  </g>
+  <rect x="35" y="10" width="6.5" height="6.5" rx="2" fill="#b5790c"/>
+  <!-- ── 字标 wordmark ── -->
+  <text x="58" y="32" font-family="'Space Grotesk','Segoe UI',system-ui,-apple-system,sans-serif" font-size="22" font-weight="600" letter-spacing="-0.5">
+    <tspan fill="#111620">Grid</tspan><tspan fill="#0e8fa6">Pilot</tspan>
+  </text>
+</svg>

@@ -1,0 +1,285 @@
+@import "tailwindcss";
+
+/* ── GridPilot Design Tokens ────────────────────────────────── */
+:root {
+  --font-display: "Space Grotesk", -apple-system, system-ui, sans-serif;
+  --font-sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --text-xs: 11px; --text-sm: 12px; --text-base: 13px; --text-md: 14px;
+  --text-lg: 16px; --text-xl: 20px; --text-2xl: 24px; --text-3xl: 32px; --text-4xl: 44px;
+
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px;
+  --sp-5: 20px; --sp-6: 24px; --sp-8: 32px; --sp-10: 40px;
+
+  --radius-sm: 4px; --radius-md: 6px; --radius-lg: 10px;
+  --radius-xl: 14px; --radius-2xl: 20px; --radius-full: 999px;
+
+  /* dark mode defaults — 青色品牌 */
+  --bg-0: #0a0c10; --bg-1: #10141a; --bg-2: #161c24; --bg-3: #1e2630; --bg-4: #27313d;
+  --border-subtle: rgba(255,255,255,0.06);
+  --border-default: rgba(255,255,255,0.10);
+  --border-strong: rgba(255,255,255,0.17);
+  --border-focus: rgba(56,189,209,0.55);
+  --fg-0: #eef2f6; --fg-1: #a9b2be; --fg-2: #6f7884; --fg-3: #49525f; --fg-inv: #04181c;
+  --accent: #38bdd1; --accent-hi: #5fd6e6; --accent-lo: #2a9bb0;
+  --accent-tint: rgba(56,189,209,0.12); --accent-tint-strong: rgba(56,189,209,0.20);
+  --alpha: #f2b33c; --alpha-hi: #ffc861;
+  --alpha-tint: rgba(242,179,60,0.13); --alpha-tint-strong: rgba(242,179,60,0.22);
+  --alpha-glow: 0 0 24px rgba(242,179,60,0.35);
+  --up: #2bd081; --up-hi: #5be0a4; --up-tint: rgba(43,208,129,0.12);
+  --down: #fc5a6b; --down-hi: #ff8089; --down-tint: rgba(252,90,107,0.12);
+  --logo-glow: drop-shadow(0 0 2.5px rgba(56,189,209,0.45));
+  --warn: #f5b13d; --danger: #fc5a6b; --info: #4cc0ff;
+  --maker: #4cc0ff; --maker-tint: rgba(76,192,255,0.13);
+  --taker: #ff6fbe; --taker-tint: rgba(255,111,190,0.13);
+  --btn-fg: #04181c;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.4);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.35);
+  --shadow-lg: 0 12px 40px rgba(0,0,0,0.5);
+}
+
+/* ── LIGHT MODE ─────────────────────────────────────────────── */
+[data-theme="light"] {
+  --bg-0: #eef0ec; --bg-1: #ffffff; --bg-2: #f6f7f4; --bg-3: #ebede8; --bg-4: #dfe1da;
+  --border-subtle: rgba(0,0,0,0.05); --border-default: rgba(0,0,0,0.10);
+  --border-strong: rgba(0,0,0,0.16); --border-focus: rgba(14,143,166,0.45);
+  --fg-0: #111620; --fg-1: #3b4554; --fg-2: #697585; --fg-3: #9aa3af; --fg-inv: #eef0ec;
+  --accent: #0e8fa6; --accent-hi: #0b7184; --accent-lo: #0b7184;
+  --accent-tint: rgba(14,143,166,0.10); --accent-tint-strong: rgba(14,143,166,0.18);
+  --alpha: #b5790c; --alpha-hi: #946308;
+  --alpha-tint: rgba(181,121,12,0.10); --alpha-tint-strong: rgba(181,121,12,0.18);
+  --alpha-glow: 0 0 20px rgba(181,121,12,0.25);
+  --up: #0d9c5b; --up-hi: #047a47; --up-tint: rgba(13,156,91,0.10);
+  --down: #dc2638; --down-hi: #b71d2c; --down-tint: rgba(220,38,56,0.10);
+  --logo-glow: none;
+  --warn: #b5790c; --danger: #dc2638; --info: #0284c7;
+  --maker: #0284c7; --maker-tint: rgba(2,132,199,0.10);
+  --taker: #c01a78; --taker-tint: rgba(192,26,120,0.10);
+  --btn-fg: #ffffff;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.06);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.08);
+  --shadow-lg: 0 12px 40px rgba(0,0,0,0.14);
+}
+
+/* ── OKX logo: white on dark, black on light ── */
+.exmark-okx { background: var(--bg-2); }
+.exmark-okx svg path { fill: var(--fg-0); }
+[data-theme="light"] .exmark-okx svg path { fill: #000; }
+
+/* ── Base reset ─────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+body, h1, h2, h3, h4, p, ul, ol { margin: 0; padding: 0; }
+ul, ol { list-style: none; }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+input, select, textarea { font: inherit; color: inherit; }
+a { color: inherit; text-decoration: none; }
+
+html, body { height: 100%; overflow: hidden; }
+body {
+  font-family: var(--font-sans);
+  background: var(--bg-0);
+  color: var(--fg-0);
+  font-size: var(--text-base);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.mono, .num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum", "zero";
+}
+
+*::-webkit-scrollbar { width: 6px; height: 6px; }
+*::-webkit-scrollbar-thumb { background: var(--bg-3); border-radius: 3px; }
+*::-webkit-scrollbar-track { background: transparent; }
+
+@keyframes gp-ping { 75%, 100% { transform: scale(2.4); opacity: 0; } }
+
+/* ── Responsive Layout Utilities ─────────────────────────── */
+
+/* Hide on mobile/tablet */
+@media (max-width: 1023px) {
+  .gp-hide-tablet { display: none !important; }
+}
+@media (max-width: 767px) {
+  .gp-hide-mobile { display: none !important; }
+}
+
+/* Show only on mobile */
+@media (min-width: 768px) {
+  .gp-show-mobile { display: none !important; }
+}
+
+/* Responsive grid columns */
+.gp-grid-1 { display: grid; grid-template-columns: minmax(0, 1fr); }
+.gp-grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.gp-grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.gp-grid-4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.gp-grid-5 { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.gp-grid-6 { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); }
+
+@media (max-width: 1023px) {
+  .gp-grid-2-md { grid-template-columns: minmax(0, 1fr); }
+  .gp-grid-3-md { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .gp-grid-4-md { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .gp-grid-5-md { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .gp-grid-6-md { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (max-width: 767px) {
+  .gp-grid-1-sm,
+  .gp-grid-2-sm,
+  .gp-grid-3-sm,
+  .gp-grid-4-sm,
+  .gp-grid-5-sm,
+  .gp-grid-6-sm { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Responsive flex direction */
+@media (max-width: 767px) {
+  .gp-flex-col-sm { flex-direction: column !important; }
+  .gp-stack-sm > * { width: 100% !important; }
+}
+
+/* Table scroll container */
+.gp-table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.gp-table-scroll table { min-width: 720px; }
+
+/* Sidebar overlay */
+.gp-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+  z-index: 90; opacity: 0; pointer-events: none; transition: opacity .2s;
+}
+.gp-overlay.open { opacity: 1; pointer-events: auto; }
+
+/* Mobile sidebar */
+@media (max-width: 767px) {
+  .gp-sidebar {
+    position: fixed; left: 0; top: 0; bottom: 0; z-index: 100;
+    transform: translateX(-100%); transition: transform .25s ease;
+  }
+  .gp-sidebar.open { transform: translateX(0); }
+}
+
+/* Mobile safe area padding */
+@supports (padding: max(0px)) {
+  .gp-safe-bottom { padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+  .gp-safe-top { padding-top: max(16px, env(safe-area-inset-top)); }
+}
+
+/* Touch-friendly tap targets on mobile */
+@media (max-width: 767px) {
+  .gp-touch-target { min-height: 44px; min-width: 44px; }
+}
+
+/* Reduced font size on mobile */
+@media (max-width: 767px) {
+  .gp-text-sm-mobile { font-size: 12px !important; }
+}
+
+/* ── Page-specific responsive grids ─────────────────────────── */
+
+/* Dashboard main content: chart + sidebar */
+.dashboard-main-grid { display: grid; grid-template-columns: 1fr 360px; gap: 16px; }
+@media (max-width: 1023px) {
+  .dashboard-main-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* New bot wizard: form + preview */
+.new-bot-grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 20px; }
+@media (max-width: 1023px) {
+  .new-bot-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Bot detail multi-column layouts */
+.bot-detail-v1-grid { display: grid; grid-template-columns: 320px 1fr 320px; gap: 16px; }
+.bot-detail-v2-grid { display: grid; grid-template-columns: 320px 1fr; gap: 16px; }
+.bot-detail-v3-grid { display: grid; grid-template-columns: 280px 1fr; gap: 16px; }
+@media (max-width: 1023px) {
+  .bot-detail-v1-grid,
+  .bot-detail-v2-grid,
+  .bot-detail-v3-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Bot detail V3 inner fill+panel grid */
+.bot-detail-v3-inner { display: grid; grid-template-columns: 1fr 280px; gap: 12px; }
+@media (max-width: 1023px) {
+  .bot-detail-v3-inner { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Bot detail monitor: 主区(梯图+成交流嵌套) + 右栏 320（对齐设计稿 pageDetail） */
+.bot-monitor-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) 320px; gap: 16px; align-items: start; }
+.bot-monitor-main { display: grid; grid-template-columns: 1fr 2fr; gap: 16px; align-items: start; min-width: 0; }
+@media (max-width: 1100px) {
+  .bot-monitor-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 1023px) {
+  .bot-monitor-main { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Settings: tabs + content */
+.settings-grid { display: grid; grid-template-columns: 200px 1fr; gap: 20px; }
+@media (max-width: 767px) {
+  .settings-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Settings tabs: horizontal scroll on mobile */
+@media (max-width: 767px) {
+  .settings-tabs {
+    flex-direction: row !important;
+    overflow-x: auto;
+    gap: 4px !important;
+    padding-bottom: 8px;
+    -webkit-overflow-scrolling: touch;
+  }
+  .settings-tabs button {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+}
+
+/* ── Login page responsive ──────────────────────────────────── */
+:root {
+  --login-flex-dir: row;
+  --login-brand-pad: 56px;
+  --login-title-size: 44px;
+  --login-form-width: 480px;
+  --login-form-pad: 56px 56px;
+}
+@media (max-width: 767px) {
+  :root {
+    --login-flex-dir: column;
+    --login-brand-pad: 28px 24px;
+    --login-title-size: 32px;
+    --login-form-width: 100%;
+    --login-form-pad: 32px 24px;
+  }
+}
+
+/* Generic mobile flex wrap utility */
+@media (max-width: 767px) {
+  .gp-wrap-sm { flex-wrap: wrap !important; }
+  .gp-gap-sm-8 { gap: 8px !important; }
+}
+
+/* Container max-width utility */
+.gp-container {
+  width: 100%;
+  max-width: 1400px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* Responsive padding utility */
+@media (max-width: 767px) {
+  .gp-pad-sm-12 { padding: 12px !important; }
+  .gp-pad-sm-16 { padding: 16px !important; }
+}
+
+/* Full-width on mobile */
+@media (max-width: 767px) {
+  .gp-w-full-sm { width: 100% !important; }
+}
+

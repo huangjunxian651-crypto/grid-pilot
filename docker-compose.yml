@@ -1,0 +1,78 @@
+# GridPilot 服务编排
+# 默认（无 profile）：仅启动 postgres + redis 基础设施（供本地开发）
+#   docker compose up -d
+# 全栈一键部署（含 api + web）：先确保根目录存在 .env，否则下方 env_file 会直接失败
+#   cp .env.example .env   # 并把 ENCRYPTION_KEY 改为 `openssl rand -base64 32` 的真实输出
+#   docker compose --profile full up --build -d
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: gridpilot
+      POSTGRES_PASSWORD: gridpilot
+      POSTGRES_DB: gridpilot
+    ports:
+      - "${DB_PORT:-25432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gridpilot"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    ports:
+      - "${REDIS_PORT:-26379}:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    profiles: ["full"]
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://gridpilot:gridpilot@postgres:5432/gridpilot
+      REDIS_URL: redis://redis:6379
+      API_HOST: 0.0.0.0
+      API_PORT: 3301
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "${API_PORT:-3301}:3301"
+
+  web:
+    profiles: ["full"]
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:${API_PORT:-3301}
+        NEXT_PUBLIC_API_PORT: ${API_PORT:-3301}
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      API_URL: http://api:3301
+      PORT: 3300
+      HOSTNAME: 0.0.0.0
+    depends_on:
+      - api
+    ports:
+      - "${WEB_PORT:-3300}:3300"
+
+volumes:
+  pgdata:
+  redisdata:

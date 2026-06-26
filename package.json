@@ -1,0 +1,38 @@
+{
+  "name": "gridpilot",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "node scripts/start-dev.js",
+    "dev:skip-infra": "node scripts/start-dev.js --skip-infra",
+    "dev:infra": "docker compose up -d",
+    "dev:api": "cd apps/api && pnpm dev",
+    "dev:web": "cd apps/web && pnpm dev",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "test": "turbo test",
+    "test:db:up": "docker compose -f docker-compose.test.yml up -d",
+    "test:db:down": "docker compose -f docker-compose.test.yml down -v",
+    "test:db:reset": "docker compose -f docker-compose.test.yml down -v && docker compose -f docker-compose.test.yml up -d",
+    "test:e2e": "pnpm test:db:up && cd e2e && npx playwright test",
+    "test:e2e:ui": "pnpm test:db:up && cd e2e && npx playwright test --ui",
+    "test:e2e:ci": "cd e2e && npx playwright test",
+    "test:acceptance": "pnpm test:db:up && dotenv -e .env.test -- tsx apps/api/scripts/testnet-acceptance.ts"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0",
+    "@types/supertest": "^7.2.0",
+    "concurrently": "^8.2.2",
+    "dotenv": "^16.0.0",
+    "dotenv-cli": "^11.0.0",
+    "socket.io-client": "^4.8.3",
+    "supertest": "^7.2.2",
+    "turbo": "^2.0.0",
+    "vitest": "^4.1.7"
+  },
+  "packageManager": "pnpm@10.32.0",
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=9"
+  }
+}

@@ -1,0 +1,18 @@
+<svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="GridPilot">
+  <title>GridPilot</title>
+  <style>
+    :root { --bg: #161c24; --accent: #38bdd1; --alpha: #f2b33c; }
+    @media (prefers-color-scheme: light) {
+      :root { --bg: #ffffff; --accent: #0e8fa6; --alpha: #b5790c; }
+    }
+  </style>
+  <rect x="2" y="2" width="44" height="44" rx="13" fill="var(--bg)"/>
+  <rect x="2" y="2" width="44" height="44" rx="13" fill="none" stroke="var(--accent)" stroke-opacity="0.32" stroke-width="1"/>
+  <g fill="var(--accent)">
+    <rect x="6.5" y="34" width="6.5" height="6.5" rx="2"/>
+    <rect x="16" y="34" width="6.5" height="6.5" rx="2"/><rect x="16" y="26" width="6.5" height="6.5" rx="2"/>
+    <rect x="25.5" y="34" width="6.5" height="6.5" rx="2"/><rect x="25.5" y="26" width="6.5" height="6.5" rx="2"/><rect x="25.5" y="18" width="6.5" height="6.5" rx="2"/>
+    <rect x="35" y="34" width="6.5" height="6.5" rx="2"/><rect x="35" y="26" width="6.5" height="6.5" rx="2"/><rect x="35" y="18" width="6.5" height="6.5" rx="2"/>
+  </g>
+  <rect x="35" y="10" width="6.5" height="6.5" rx="2" fill="var(--alpha)"/>
+</svg>

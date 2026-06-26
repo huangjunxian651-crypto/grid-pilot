@@ -1,0 +1,12 @@
+<svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="GridPilot">
+  <title>GridPilot</title>
+  <rect x="2" y="2" width="44" height="44" rx="13" fill="#161c24"/>
+  <rect x="2" y="2" width="44" height="44" rx="13" fill="none" stroke="#38bdd1" stroke-opacity="0.32" stroke-width="1"/>
+  <g fill="#38bdd1">
+    <rect x="6.5" y="34" width="6.5" height="6.5" rx="2"/>
+    <rect x="16" y="34" width="6.5" height="6.5" rx="2"/><rect x="16" y="26" width="6.5" height="6.5" rx="2"/>
+    <rect x="25.5" y="34" width="6.5" height="6.5" rx="2"/><rect x="25.5" y="26" width="6.5" height="6.5" rx="2"/><rect x="25.5" y="18" width="6.5" height="6.5" rx="2"/>
+    <rect x="35" y="34" width="6.5" height="6.5" rx="2"/><rect x="35" y="26" width="6.5" height="6.5" rx="2"/><rect x="35" y="18" width="6.5" height="6.5" rx="2"/>
+  </g>
+  <rect x="35" y="10" width="6.5" height="6.5" rx="2" fill="#f2b33c"/>
+</svg>

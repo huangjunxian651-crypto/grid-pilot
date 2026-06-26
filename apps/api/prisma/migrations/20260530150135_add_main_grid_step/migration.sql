@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "BotRangeConfig" ADD COLUMN     "mainGridStep" DOUBLE PRECISION NOT NULL DEFAULT 0;

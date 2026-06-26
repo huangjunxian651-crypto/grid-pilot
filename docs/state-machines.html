@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GridPilot 核心状态机图解</title>
+<style>
+  :root{
+    --bg-0:#0b0e14; --bg-1:#131722; --bg-2:#1c2230; --border:#2a3142;
+    --fg-0:#e8edf6; --fg-1:#aeb8c9; --fg-2:#7b8699; --fg-3:#566072;
+    --accent:#4c8dff; --up:#26c281; --down:#ff5470; --amber:#f0a020;
+    --purple:#a87bff; --teal:#2dd4bf;
+    --edge:#46506a;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg-0);color:var(--fg-0);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    line-height:1.6;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1120px;margin:0 auto;padding:32px 24px 80px}
+  header.hero{padding:28px 0 8px}
+  h1{font-size:30px;margin:0 0 6px;letter-spacing:.3px}
+  h1 .em{color:var(--accent)}
+  .sub{color:var(--fg-2);font-size:14px;margin:0}
+  h2{font-size:21px;margin:46px 0 6px;display:flex;align-items:center;gap:10px}
+  h2 .num{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;
+    background:var(--bg-2);border:1px solid var(--border);border-radius:8px;font-size:15px;color:var(--accent)}
+  h3{font-size:16px;margin:26px 0 8px;color:var(--fg-1)}
+  p.lead{color:var(--fg-1);font-size:14.5px;margin:6px 0 14px;max-width:880px}
+  .card{background:var(--bg-1);border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin:14px 0}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:820px){.grid2{grid-template-columns:1fr}}
+  code{background:var(--bg-2);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-size:12.5px;
+    font-family:"SFMono-Regular",Consolas,monospace;color:var(--teal)}
+  .muted{color:var(--fg-2)}
+  .hint{font-size:12.5px;color:var(--fg-3);margin-top:8px}
+
+  /* layer mental model */
+  .layers{display:flex;flex-direction:column;gap:0}
+  .layer{border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin:0;position:relative;background:var(--bg-1)}
+  .layer + .layer{margin-top:-2px}
+  .layer.l1{margin-left:0}
+  .layer.l2{margin-left:36px;margin-top:12px;border-color:#33405e}
+  .layer.l3{margin-left:72px;margin-top:12px;border-color:#3a4a44}
+  .layer .lt{font-weight:600;font-size:15px;margin-bottom:2px}
+  .layer .ld{font-size:13px;color:var(--fg-2)}
+  .layer .chips{margin-top:8px}
+  .badge{display:inline-block;font-size:11px;padding:2px 7px;border-radius:20px;margin:3px 4px 0 0;
+    border:1px solid var(--border);background:var(--bg-2);color:var(--fg-1);white-space:nowrap}
+
+  /* svg diagram */
+  .diagram-card{background:radial-gradient(120% 120% at 50% 0%,#161b27 0%,#0f131c 100%);
+    border:1px solid var(--border);border-radius:14px;padding:8px 8px 4px;margin:10px 0}
+  svg.fsm{width:100%;height:auto;display:block;user-select:none}
+  .node rect{transition:filter .15s,opacity .15s}
+  .node text{pointer-events:none;font-family:"SFMono-Regular",Consolas,monospace}
+  .node .nm{font-size:13.5px;font-weight:600;fill:var(--fg-0)}
+  .node .cn{font-size:11px;fill:var(--fg-2);font-weight:400;font-family:inherit}
+  .node{cursor:pointer}
+  .node:hover rect{filter:brightness(1.25)}
+  .edge{fill:none;stroke:#46506a;stroke-width:1.7;transition:stroke .15s,opacity .15s,stroke-width .15s}
+  .edge.dash{stroke-dasharray:5 4}
+  .elabel{font-size:10.5px;fill:var(--fg-1);font-family:inherit}
+  .elabel-bg{fill:#0f131c;opacity:.85}
+  .efg{transition:opacity .15s}
+  /* highlight states */
+  svg.hl .edge{opacity:.12}
+  svg.hl .efg{opacity:.12}
+  svg.hl .node rect{opacity:.32}
+  svg.hl .node.sel rect{opacity:1;filter:brightness(1.3) drop-shadow(0 0 6px rgba(120,160,255,.5))}
+  svg.hl .edge.out{opacity:1;stroke:var(--up);stroke-width:2.4}
+  svg.hl .edge.in{opacity:1;stroke:var(--accent);stroke-width:2.4}
+  svg.hl .efg.out,svg.hl .efg.in{opacity:1}
+  svg.hl .node.adj rect{opacity:.9}
+
+  .legend{display:flex;flex-wrap:wrap;gap:14px;font-size:12px;color:var(--fg-2);padding:6px 4px 2px}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .sw{width:14px;height:14px;border-radius:4px;display:inline-block;border:1px solid rgba(255,255,255,.15)}
+
+  .detail{min-height:60px;margin-top:6px}
+  .detail .empty{color:var(--fg-3);font-size:13px;padding:10px 4px}
+  .detail .dt-name{font-size:15px;font-weight:700;font-family:"SFMono-Regular",Consolas,monospace}
+  .detail .dt-mean{color:var(--fg-2);font-size:13px;margin:2px 0 10px}
+  .trow{display:flex;gap:8px;align-items:flex-start;font-size:13px;padding:4px 0;border-top:1px dashed var(--border)}
+  .trow .arr{font-weight:700;font-family:monospace;flex:0 0 auto}
+  .trow .to{font-family:"SFMono-Regular",Consolas,monospace;flex:0 0 auto;color:var(--fg-0)}
+  .trow .cond{color:var(--fg-2)}
+  .trow.in .arr{color:var(--accent)} .trow.out .arr{color:var(--up)}
+
+  table{width:100%;border-collapse:collapse;font-size:13px;margin:8px 0}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:top}
+  th{color:var(--fg-2);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.4px}
+  td code{white-space:nowrap}
+  .term-good{color:var(--up)} .term-bad{color:var(--down)} .term-neu{color:var(--amber)}
+
+  /* stepper */
+  .stepper-controls{display:flex;gap:8px;align-items:center;margin:6px 0 14px;flex-wrap:wrap}
+  button.btn{background:var(--bg-2);border:1px solid var(--border);color:var(--fg-0);border-radius:8px;
+    padding:7px 14px;font-size:13px;cursor:pointer;transition:background .12s,border-color .12s}
+  button.btn:hover{background:#26304a;border-color:var(--accent)}
+  button.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  button.btn:disabled{opacity:.4;cursor:not-allowed}
+  .step-progress{flex:1;min-width:120px;height:6px;background:var(--bg-2);border-radius:6px;overflow:hidden}
+  .step-progress > i{display:block;height:100%;background:var(--accent);width:0;transition:width .3s}
+  .step-count{font-size:12px;color:var(--fg-2);font-variant-numeric:tabular-nums}
+  .stage{display:flex;gap:14px;align-items:flex-start;background:var(--bg-1);border:1px solid var(--border);
+    border-radius:12px;padding:16px 18px;min-height:96px}
+  .stage .icon{font-size:26px;flex:0 0 auto;width:42px;height:42px;display:flex;align-items:center;justify-content:center;
+    background:var(--bg-2);border-radius:10px}
+  .stage .body .stitle{font-weight:600;font-size:15px;margin-bottom:3px}
+  .stage .body .sdesc{font-size:13.5px;color:var(--fg-1)}
+  .stage .body .schips{margin-top:8px}
+  .chip{display:inline-block;font-size:11px;font-family:"SFMono-Regular",Consolas,monospace;
+    padding:3px 9px;border-radius:6px;margin:3px 5px 0 0;border:1px solid var(--border)}
+  .chip.robot{background:rgba(76,141,255,.14);color:#9cc0ff;border-color:#33405e}
+  .chip.run{background:rgba(45,212,191,.12);color:#6fe6d6;border-color:#2c4a44}
+  .chip.fsm{background:rgba(168,123,255,.13);color:#c3a8ff;border-color:#3c3358}
+
+  /* stop flow */
+  .pipe{display:flex;align-items:stretch;gap:0;margin:14px 0}
+  .pstage{flex:1;text-align:center;padding:14px 8px;border:1px solid var(--border);background:var(--bg-1);position:relative}
+  .pstage:first-child{border-radius:10px 0 0 10px}
+  .pstage:last-child{border-radius:0 10px 10px 0}
+  .pstage + .pstage{border-left:none}
+  .pstage.active{background:linear-gradient(180deg,#1e2740,#161d2e);border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+  .pstage.done{background:#152417;border-color:#27502f}
+  .pstage .pn{font-family:"SFMono-Regular",Consolas,monospace;font-size:12px;font-weight:700;color:var(--fg-0)}
+  .pstage .pd{font-size:11.5px;color:var(--fg-2);margin-top:4px}
+  .pstage .pa{font-size:18px}
+  .keyrow{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
+
+  .cmp{border:1px solid var(--border);border-radius:12px;overflow:hidden}
+  .cmp .ch{display:grid;grid-template-columns:130px 1fr 1fr}
+  .cmp .ch > div{padding:10px 12px;border-bottom:1px solid var(--border);font-size:13px}
+  .cmp .ch.head > div{background:var(--bg-2);font-weight:600}
+  .cmp .ch > div:first-child{color:var(--fg-2);border-right:1px solid var(--border)}
+  .cmp .ch > div:nth-child(2){border-right:1px solid var(--border)}
+  .pill{font-size:11px;padding:2px 8px;border-radius:20px}
+  .pill.yes{background:rgba(38,194,129,.16);color:var(--up)} .pill.no{background:rgba(255,84,112,.16);color:var(--down)}
+  footer{margin-top:60px;color:var(--fg-3);font-size:12px;text-align:center}
+  .toc{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 6px}
+  .toc a{font-size:12.5px;color:var(--fg-1);text-decoration:none;background:var(--bg-1);border:1px solid var(--border);
+    padding:6px 11px;border-radius:20px}
+  .toc a:hover{border-color:var(--accent);color:#fff}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <h1>GridPilot <span class="em">核心状态机</span> 图解</h1>
+  <p class="sub">三层模型 · 状态迁移 · 触发条件 · 场景动画 — 数据基准：<code>docs/trading-engine-domain-guide.md</code>（main）</p>
+  <div class="toc">
+    <a href="#m0">三层心智模型</a>
+    <a href="#m1">① Robot 状态机</a>
+    <a href="#m2">② Run 状态机</a>
+    <a href="#m3">③ FSM 执行引擎</a>
+    <a href="#link">三层联动</a>
+    <a href="#life">生命周期动画</a>
+    <a href="#stop">停止流程</a>
+    <a href="#cmp">易混术语对照</a>
+  </div>
+</header>
+
+<!-- 0. 三层模型 -->
+<h2 id="m0"><span class="num">0</span>一句话心智模型：三层</h2>
+<p class="lead">理解这套系统先记住它分<strong>三层</strong>，每层是不同寿命的东西、各有自己的状态机。你的大部分困惑都来自把这三层混为一谈。</p>
+<div class="layers">
+  <div class="layer l1">
+    <div class="lt">① Robot（机器人）— 长期实体，从创建到删除/归档</div>
+    <div class="ld">"我要在 币安 的 ETH/USDT 上做多网格" 这件事本身。管它的代码：<code>BotManagerService</code></div>
+    <div class="chips">
+      <span class="badge">PAUSED</span><span class="badge">RUNNING</span><span class="badge">STOPPING</span><span class="badge">STOPPED</span>
+    </div>
+  </div>
+  <div class="layer l2">
+    <div class="lt">② Run / session（交易回合）— 临时，几分钟到几小时</div>
+    <div class="ld">价格进入某箱体"激活窗口"才诞生一个 Run，止盈/止损/用户停止就结束。一个 Robot 一生经历很多个 Run。落库的"账本状态"。</div>
+    <div class="chips">
+      <span class="badge">TRAILING_ENTRY</span><span class="badge">RUNNING</span><span class="badge">PAUSED</span><span class="badge">LIQUIDATING</span><span class="badge">LIQUIDATED</span><span class="badge">TAKE_PROFIT</span><span class="badge">STOPPED</span><span class="badge">SUPERSEDED</span>
+    </div>
+  </div>
+  <div class="layer l3">
+    <div class="lt">③ GridBotRunner + FSM（执行引擎）— 与 Run 同生死</div>
+    <div class="ld">真正在交易所挂单/撤单/平仓的内存对象，内部一个有限状态机逐 tick 决策。管它的代码：<code>TradingEngineService</code> + <code>GridBotRunner</code></div>
+    <div class="chips">
+      <span class="badge">HOLD</span><span class="badge">TRAILING_ENTRY</span><span class="badge">RUNNING</span><span class="badge">LIQUIDATING</span><span class="badge">LIQUIDATED</span><span class="badge">TAKE_PROFIT</span><span class="badge">CANCELLED</span><span class="badge">PAUSED</span>
+    </div>
+  </div>
+</div>
+<p class="hint">💡 提示：下面每张状态图都可<strong>点击任意状态</strong>，高亮它的进入/离开迁移并在下方列出触发条件；点空白处取消。</p>
+
+<!-- legend -->
+<div class="card" style="padding:12px 16px">
+  <div class="legend">
+    <span><i class="sw" style="background:#33405e"></i>起始/占位</span>
+    <span><i class="sw" style="background:#2a3142"></i>运行/过渡</span>
+    <span><i class="sw" style="background:#7a5a18"></i>暂停（可恢复）</span>
+    <span><i class="sw" style="background:#1f5a35"></i>终态·正常（止盈）</span>
+    <span><i class="sw" style="background:#6e2233"></i>终态·清算（止损）</span>
+    <span><i class="sw" style="background:#5a4410"></i>终态·中性（停止/取消/取代）</span>
+    <span style="margin-left:auto"><i class="sw" style="background:var(--up)"></i>离开迁移&nbsp;&nbsp;<i class="sw" style="background:var(--accent)"></i>进入迁移</span>
+  </div>
+</div>
+
+<!-- 1. Robot -->
+<h2 id="m1"><span class="num">1</span>Robot.status — 机器人状态机</h2>
+<p class="lead">你在列表/详情页看到的状态。要点：<strong>RUNNING ≠ 正在交易</strong>（含"监控中"：无活跃箱、调度器在等价格进窗）；<code>STOPPING</code> 是异步停止新增的中间态，<strong>绝不卡死</strong>，出错也兜底落 STOPPED。</p>
+<div class="diagram-card"><div id="diag-robot"></div></div>
+<div class="card detail" id="detail-robot"><div class="empty">点击上方任意状态查看其迁移与触发条件。</div></div>
+
+<!-- 2. Run -->
+<h2 id="m2"><span class="num">2</span>Run.state — 交易回合状态机</h2>
+<p class="lead">数据库里每条 Run 记录的状态。与 ③ 的 FSM 高度重叠但不完全相同——Run.state 是落库的<strong>账本状态</strong>，FSM 是内存的<strong>执行状态</strong>。四个终态会写 <code>endedAt</code>。非终态<strong>跟随 FSM 写回</strong>（<code>syncRunStateFromFsm</code>）：恢复时按真实持仓落 <code>RUNNING</code>（有仓）或 <code>TRAILING_ENTRY</code>（无仓），上层不硬猜。</p>
+<div class="diagram-card"><div id="diag-run"></div></div>
+<div class="card detail" id="detail-run"><div class="empty">点击上方任意状态查看其迁移与触发条件。</div></div>
+
+<!-- 3. FSM -->
+<h2 id="m3"><span class="num">3</span>FSM.kind — 执行引擎内部状态机</h2>
+<p class="lead">最底层、最细的状态机，在 <code>GridBotRunner</code> 内驱动每一次行情 tick 的决策。<strong>三个终态</strong> <span class="term-good">TAKE_PROFIT</span> / <span class="term-bad">LIQUIDATED</span> / <span class="term-neu">CANCELLED</span> 一旦进入，runner 自动停止、回合结束。</p>
+<div class="diagram-card"><div id="diag-fsm"></div></div>
+<div class="card detail" id="detail-fsm"><div class="empty">点击上方任意状态查看其迁移与触发条件。</div></div>
+
+<!-- link -->
+<h2 id="link"><span class="num">4</span>三层怎么联动</h2>
+<div class="grid2">
+  <div class="card">
+    <h3 style="margin-top:0">⬇ 用户操作：自上而下传</h3>
+    <div style="font-size:13.5px;color:var(--fg-1)">
+      Robot 停止 → 调 session 级 <code>stopBot</code>/<code>detachBot</code> → runner 内 FSM 走向终态 → 终态回调 <code>handleAutoTermination</code> → 写 Run.state 终态 → 通知 Robot 清掉活跃箱。
+    </div>
+    <div style="margin-top:12px;font-size:13px;color:var(--fg-2);line-height:2">
+      <span class="chip robot">Robot: STOPPING</span> →
+      <span class="chip fsm">FSM: LIQUIDATING→LIQUIDATED</span> →
+      <span class="chip run">Run: STOPPED</span> →
+      <span class="chip robot">Robot: STOPPED</span>
+    </div>
+  </div>
+  <div class="card">
+    <h3 style="margin-top:0">⬆ 自动事件：自下而上冒</h3>
+    <div style="font-size:13.5px;color:var(--fg-1)">
+      价格触发止盈/止损 → FSM 进终态 → 写 Run 终态（<code>endedAt</code>）→ 回调 <code>onBoxTerminated</code> 清活跃箱 → Robot 回到 RUNNING 的"监控中"等下一次激活。
+    </div>
+    <div style="margin-top:12px;font-size:13px;color:var(--fg-2);line-height:2">
+      <span class="chip fsm">FSM: RUNNING→TAKE_PROFIT</span> →
+      <span class="chip run">Run: TAKE_PROFIT</span> →
+      <span class="chip robot">Robot: RUNNING（监控中）</span>
+    </div>
+  </div>
+</div>
+
+<!-- lifecycle stepper -->
+<h2 id="life"><span class="num">5</span>一台机器人的一生（分步动画）</h2>
+<p class="lead">点 <strong>下一步 / 自动播放</strong>，跟着走完从创建到停止的完整生命周期，看三层状态如何随事件联动变化。</p>
+<div class="stepper-controls">
+  <button class="btn" id="lifePrev">‹ 上一步</button>
+  <button class="btn primary" id="lifeNext">下一步 ›</button>
+  <button class="btn" id="lifePlay">▶ 自动播放</button>
+  <div class="step-progress"><i id="lifeBar"></i></div>
+  <span class="step-count" id="lifeCount"></span>
+</div>
+<div class="stage" id="lifeStage">
+  <div class="icon" id="lifeIcon">🌱</div>
+  <div class="body">
+    <div class="stitle" id="lifeTitle"></div>
+    <div class="sdesc" id="lifeDesc"></div>
+    <div class="schips" id="lifeChips"></div>
+  </div>
+</div>
+
+<!-- stop flow -->
+<h2 id="stop"><span class="num">6</span>停止流程（stopStage / stopWarning）</h2>
+<p class="lead">用户点"停止"后，后台 <code>runStopJob</code> 分阶段推进，每阶段把进度写进 <code>robot.stopStage</code> 供前端轮询显示。点击下方阶段查看。</p>
+<div class="pipe" id="stopPipe"></div>
+<div class="card" id="stopDetail" style="min-height:54px"></div>
+<h3>若过程不干净，落 STOPPED 时带一个 stopWarning（前端翻译成提示，<span class="term-bad">不卡死</span>）</h3>
+<table>
+  <thead><tr><th style="width:210px">stopWarning</th><th>含义</th></tr></thead>
+  <tbody>
+    <tr><td><code>LIQUIDATION_TIMEOUT</code></td><td>平仓 30 秒没完成，交易所可能还有仓，去核对</td></tr>
+    <tr><td><code>RESIDUAL_POSITION</code></td><td>复核后仍有残留、强平也失败，去手动平</td></tr>
+    <tr><td><code>SNAPSHOT_UNAVAILABLE</code></td><td>抓快照失败，停止前持仓数据可能不全</td></tr>
+    <tr><td><code>STOP_INTERRUPTED</code></td><td>停止过程被意外打断（兜底），去核对仓位与挂单</td></tr>
+  </tbody>
+</table>
+
+<!-- comparison -->
+<h2 id="cmp"><span class="num">7</span>最易混的术语对照</h2>
+<div class="grid2">
+  <div>
+    <h3 style="margin-top:6px">⭐ stopBot vs detachBot（区别只在持仓）</h3>
+    <div class="cmp">
+      <div class="ch head"><div></div><div>stopBot</div><div>detachBot</div></div>
+      <div class="ch"><div>平仓？</div><div><span class="pill yes">✅ 平</span> 市价清仓+复核兜底强平</div><div><span class="pill no">❌ 不平</span> 只撤单</div></div>
+      <div class="ch"><div>持仓去向</div><div>清零</div><div>留在交易所，下个箱体激活时自动接管（自愈）</div></div>
+      <div class="ch"><div>结束原因</div><div><code>MANUAL</code>→<code>USER_CLOSE</code></div><div><code>DETACHED</code>→<code>USER_DETACH</code></div></div>
+      <div class="ch"><div>典型场景</div><div>停止并平仓</div><div>切箱前卸下旧回合、保留持仓</div></div>
+    </div>
+    <p class="hint">一句话：<strong>stopBot = 停 + 平仓；detachBot = 停 + 不平仓（仓位交棒下个箱体）。</strong></p>
+  </div>
+  <div>
+    <h3 style="margin-top:6px">⭐ stop（停止） vs pause（暂停）</h3>
+    <div class="cmp">
+      <div class="ch head"><div></div><div>stop 停止</div><div>pause 暂停</div></div>
+      <div class="ch"><div>Robot 终态？</div><div><span class="pill yes">✅ 是</span> 进 STOPPED</div><div><span class="pill no">❌ 否</span> 进 PAUSED</div></div>
+      <div class="ch"><div>持仓</div><div>可选平掉</div><div>保留</div></div>
+      <div class="ch"><div>runner</div><div>关闭（清算或分离）</div><div>保留在内存</div></div>
+      <div class="ch"><div>可恢复</div><div>不能，只能重启机器人</div><div>调恢复即可继续</div></div>
+      <div class="ch"><div>场景</div><div>不想跑了</div><div>临时停一下（看参数/等时机）</div></div>
+    </div>
+    <p class="hint">归档语义：机器人 STOPPED 即写 <code>endedAt</code>、移出主列表进归档，<strong>终态不可重启</strong>，要再跑就新建。</p>
+  </div>
+</div>
+
+<footer>GridPilot · 核心状态机交互图解 · 单文件离线可用 · 数据源 trading-engine-domain-guide.md</footer>
+</div>
+
+<script>
+/* ============ 状态机数据 ============ */
+// kind 决定配色: start / state / pause / good / bad / neutral
+const KIND_FILL = {
+  start:"#26314a", state:"#222a3a", pause:"#5c451a",
+  good:"#1f5a35", bad:"#6e2233", neutral:"#5a4410"
+};
+const KIND_STROKE = {
+  start:"#3f5685", state:"#3a445e", pause:"#a07520",
+  good:"#2f8a52", bad:"#a83a52", neutral:"#8a6a18"
+};
+
+const MACHINES = {
+  robot:{
+    vb:[0,0,1000,240],
+    nodes:[
+      {id:"PAUSED",cn:"暂停 / 未启动",x:50,y:108,w:170,h:66,kind:"pause"},
+      {id:"RUNNING",cn:"运行中（监控/交易）",x:330,y:108,w:190,h:66,kind:"state"},
+      {id:"STOPPING",cn:"停止中（后台收尾）",x:620,y:108,w:170,h:66,kind:"state"},
+      {id:"STOPPED",cn:"已停止 · 终态",x:820,y:30,w:150,h:66,kind:"neutral"},
+    ],
+    edges:[
+      {entry:"PAUSED",label:"创建"},
+      {from:"PAUSED",to:"RUNNING",fs:"right",ts:"left",bend:-30,label:"用户启动"},
+      {from:"RUNNING",to:"PAUSED",fs:"left",ts:"right",bend:30,label:"用户暂停"},
+      {from:"RUNNING",to:"STOPPING",fs:"right",ts:"left",label:"点停止（立即返回）"},
+      {from:"STOPPING",to:"STOPPED",fs:"top",ts:"left",bend:0,label:"job 跑完（数秒）"},
+      {from:"STOPPING",to:"STOPPED",fs:"right",ts:"bottom",bend:60,dash:true,label:"出错兜底 · 绝不卡死"},
+    ]
+  },
+  run:{
+    vb:[0,0,1000,470],
+    nodes:[
+      {id:"TRAILING_ENTRY",cn:"追踪建仓",x:50,y:40,w:200,h:62,kind:"start"},
+      {id:"RUNNING",cn:"主网格交易",x:410,y:40,w:160,h:62,kind:"state"},
+      {id:"TAKE_PROFIT",cn:"已止盈 ★",x:790,y:40,w:175,h:62,kind:"good"},
+      {id:"PAUSED",cn:"暂停",x:410,y:185,w:160,h:62,kind:"pause"},
+      {id:"STOPPED",cn:"用户停止 ★",x:790,y:185,w:175,h:62,kind:"neutral"},
+      {id:"LIQUIDATING",cn:"清算中",x:410,y:330,w:175,h:62,kind:"state"},
+      {id:"LIQUIDATED",cn:"已清算 ★",x:790,y:330,w:175,h:62,kind:"bad"},
+      {id:"SUPERSEDED",cn:"被新回合取代 ★",x:50,y:330,w:200,h:62,kind:"neutral"},
+    ],
+    edges:[
+      {entry:"TRAILING_ENTRY",label:"激活"},
+      {from:"TRAILING_ENTRY",to:"RUNNING",fs:"right",ts:"left",label:"价格回调达标 → 开网格"},
+      {from:"RUNNING",to:"TAKE_PROFIT",fs:"right",ts:"left",label:"止盈达成，仓位清空"},
+      {from:"RUNNING",to:"PAUSED",fs:"bottom",ts:"top",bend:-22,label:"用户暂停"},
+      {from:"PAUSED",to:"RUNNING",fs:"top",ts:"bottom",bend:-22,label:"恢复且有仓"},
+      {from:"PAUSED",to:"TRAILING_ENTRY",fs:"left",ts:"bottom",bend:60,label:"恢复且无仓"},
+      {from:"RUNNING",to:"LIQUIDATING",fs:"bottom",ts:"top",bend:120,label:"止损 / 用户清算 / 窗口关闭"},
+      {from:"LIQUIDATING",to:"LIQUIDATED",fs:"right",ts:"left",label:"持仓清零"},
+      {from:"RUNNING",to:"STOPPED",fs:"bottom",ts:"left",bend:70,label:"用户停止（平仓/分离）"},
+      {from:"RUNNING",to:"SUPERSEDED",fs:"left",ts:"top",bend:40,label:"同箱新回合取代"},
+    ]
+  },
+  fsm:{
+    vb:[0,0,1000,470],
+    nodes:[
+      {id:"HOLD",cn:"冷启占位",x:40,y:40,w:130,h:60,kind:"start"},
+      {id:"TRAILING_ENTRY",cn:"追踪等待",x:290,y:40,w:185,h:60,kind:"state"},
+      {id:"RUNNING",cn:"主网格运行",x:600,y:40,w:155,h:60,kind:"state"},
+      {id:"TAKE_PROFIT",cn:"止盈 ★",x:820,y:40,w:160,h:60,kind:"good"},
+      {id:"CANCELLED",cn:"窗口关闭没成交 ★",x:290,y:200,w:185,h:60,kind:"neutral"},
+      {id:"LIQUIDATING",cn:"清算中",x:600,y:200,w:155,h:60,kind:"state"},
+      {id:"LIQUIDATED",cn:"清算完成 ★",x:820,y:200,w:160,h:60,kind:"bad"},
+      {id:"PAUSED",cn:"暂停",x:600,y:355,w:155,h:60,kind:"pause"},
+    ],
+    edges:[
+      {entry:"HOLD",label:"冷启动"},
+      {from:"HOLD",to:"TRAILING_ENTRY",fs:"right",ts:"left",label:"恢复出真实状态即被替换"},
+      {from:"TRAILING_ENTRY",to:"RUNNING",fs:"right",ts:"left",label:"价格回调达标"},
+      {from:"TRAILING_ENTRY",to:"CANCELLED",fs:"bottom",ts:"top",label:"价格跌回激活线内 / 窗口关闭"},
+      {from:"RUNNING",to:"TAKE_PROFIT",fs:"right",ts:"left",label:"d≤0 且无仓"},
+      {from:"RUNNING",to:"LIQUIDATING",fs:"bottom",ts:"top",label:"跌穿满仓线(越止损) / 用户清算"},
+      {from:"LIQUIDATING",to:"LIQUIDATED",fs:"right",ts:"left",label:"持仓清零"},
+      {from:"RUNNING",to:"PAUSED",fs:"bottom",ts:"top",bend:50,label:"用户暂停"},
+      {from:"PAUSED",to:"RUNNING",fs:"right",ts:"bottom",bend:80,label:"恢复且有仓"},
+      {from:"PAUSED",to:"TRAILING_ENTRY",fs:"left",ts:"bottom",bend:120,label:"恢复且无仓"},
+    ]
+  }
+};
+
+/* ============ SVG 渲染 ============ */
+const NS="http://www.w3.org/2000/svg";
+function anchor(n,side){
+  switch(side){
+    case"left":return{x:n.x,y:n.y+n.h/2};
+    case"right":return{x:n.x+n.w,y:n.y+n.h/2};
+    case"top":return{x:n.x+n.w/2,y:n.y};
+    case"bottom":return{x:n.x+n.w/2,y:n.y+n.h};
+  }
+}
+function buildSVG(key){
+  const m=MACHINES[key];
+  const byId={};m.nodes.forEach(n=>byId[n.id]=n);
+  const svg=document.createElementNS(NS,"svg");
+  svg.setAttribute("class","fsm");svg.setAttribute("viewBox",m.vb.join(" "));
+  // arrow marker
+  svg.innerHTML=`<defs>
+    <marker id="ah-${key}" markerWidth="9" markerHeight="9" refX="7.5" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#46506a"/></marker>
+    <marker id="ah-out-${key}" markerWidth="9" markerHeight="9" refX="7.5" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#26c281"/></marker>
+    <marker id="ah-in-${key}" markerWidth="9" markerHeight="9" refX="7.5" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#4c8dff"/></marker>
+  </defs>`;
+  const gEdges=document.createElementNS(NS,"g");
+  const gLabels=document.createElementNS(NS,"g");
+  const gNodes=document.createElementNS(NS,"g");
+
+  m.edges.forEach((e,i)=>{
+    let a,b;
+    if(e.entry){ // entry arrow from outside
+      const n=byId[e.entry]; b=anchor(n,"left"); a={x:b.x-46,y:b.y};
+    }else{
+      a=anchor(byId[e.from],e.fs); b=anchor(byId[e.to],e.ts);
+    }
+    const bend=e.bend||0;
+    const mx=(a.x+b.x)/2, my=(a.y+b.y)/2;
+    let dx=b.x-a.x, dy=b.y-a.y; const len=Math.hypot(dx,dy)||1;
+    const px=-dy/len, py=dx/len; // perpendicular unit
+    const cx=mx+px*bend, cy=my+py*bend;
+    const path=document.createElementNS(NS,"path");
+    const d = bend? `M${a.x},${a.y} Q${cx},${cy} ${b.x},${b.y}` : `M${a.x},${a.y} L${b.x},${b.y}`;
+    path.setAttribute("d",d);
+    path.setAttribute("class","edge"+(e.dash?" dash":""));
+    path.setAttribute("marker-end",`url(#ah-${key})`);
+    if(!e.entry){path.dataset.from=e.from;path.dataset.to=e.to;}
+    path.dataset.idx=i;
+    gEdges.appendChild(path);
+    // label at quadratic midpoint
+    const t=.5;
+    const lx = bend ? (1-t)*(1-t)*a.x + 2*(1-t)*t*cx + t*t*b.x : mx;
+    const ly = bend ? (1-t)*(1-t)*a.y + 2*(1-t)*t*cy + t*t*b.y : my;
+    const g=document.createElementNS(NS,"g");g.setAttribute("class","efg");g.dataset.idx=i;
+    if(!e.entry){g.dataset.from=e.from;g.dataset.to=e.to;}
+    const txt=document.createElementNS(NS,"text");
+    txt.setAttribute("class","elabel");txt.setAttribute("x",lx);txt.setAttribute("y",ly);
+    txt.setAttribute("text-anchor","middle");txt.setAttribute("dominant-baseline","middle");
+    txt.textContent=e.label;
+    const rect=document.createElementNS(NS,"rect");rect.setAttribute("class","elabel-bg");rect.setAttribute("rx","4");
+    g.appendChild(rect);g.appendChild(txt);gLabels.appendChild(g);
+    // size bg after measure (deferred)
+    e.__lx=lx;e.__ly=ly;e.__rect=rect;e.__txt=txt;
+  });
+
+  m.nodes.forEach(n=>{
+    const g=document.createElementNS(NS,"g");g.setAttribute("class","node");g.dataset.id=n.id;
+    const r=document.createElementNS(NS,"rect");
+    r.setAttribute("x",n.x);r.setAttribute("y",n.y);r.setAttribute("width",n.w);r.setAttribute("height",n.h);
+    r.setAttribute("rx","12");
+    r.setAttribute("fill",KIND_FILL[n.kind]);r.setAttribute("stroke",KIND_STROKE[n.kind]);r.setAttribute("stroke-width","1.6");
+    const t1=document.createElementNS(NS,"text");t1.setAttribute("class","nm");
+    t1.setAttribute("x",n.x+n.w/2);t1.setAttribute("y",n.y+n.h/2-7);t1.setAttribute("text-anchor","middle");
+    t1.textContent=n.id;
+    const t2=document.createElementNS(NS,"text");t2.setAttribute("class","cn");
+    t2.setAttribute("x",n.x+n.w/2);t2.setAttribute("y",n.y+n.h/2+12);t2.setAttribute("text-anchor","middle");
+    t2.textContent=n.cn;
+    g.appendChild(r);g.appendChild(t1);g.appendChild(t2);gNodes.appendChild(g);
+  });
+
+  svg.appendChild(gEdges);svg.appendChild(gLabels);svg.appendChild(gNodes);
+  return {svg,machine:m};
+}
+
+function mountMachine(key,containerId,detailId){
+  const {svg,machine}=buildSVG(key);
+  const cont=document.getElementById(containerId);cont.appendChild(svg);
+  // size label backgrounds after in DOM
+  requestAnimationFrame(()=>{
+    machine.edges.forEach(e=>{
+      if(!e.__txt)return;
+      const bb=e.__txt.getBBox();
+      e.__rect.setAttribute("x",bb.x-5);e.__rect.setAttribute("y",bb.y-2);
+      e.__rect.setAttribute("width",bb.width+10);e.__rect.setAttribute("height",bb.height+4);
+    });
+  });
+  const detail=document.getElementById(detailId);
+  const byId={};machine.nodes.forEach(n=>byId[n.id]=n);
+
+  function clear(){
+    svg.classList.remove("hl");
+    svg.querySelectorAll(".node").forEach(n=>n.classList.remove("sel","adj"));
+    svg.querySelectorAll(".edge").forEach(p=>{p.classList.remove("out","in");p.setAttribute("marker-end",`url(#ah-${key})`);});
+    svg.querySelectorAll(".efg").forEach(p=>p.classList.remove("out","in"));
+    detail.innerHTML='<div class="empty">点击上方任意状态查看其迁移与触发条件。</div>';
+  }
+  function select(id){
+    svg.classList.add("hl");
+    svg.querySelectorAll(".node").forEach(n=>n.classList.toggle("sel",n.dataset.id===id));
+    const adj=new Set();
+    svg.querySelectorAll(".edge").forEach(p=>{
+      const out=p.dataset.from===id, inc=p.dataset.to===id;
+      p.classList.toggle("out",out);p.classList.toggle("in",inc&&!out);
+      if(out)p.setAttribute("marker-end",`url(#ah-out-${key})`);
+      else if(inc)p.setAttribute("marker-end",`url(#ah-in-${key})`);
+      else p.setAttribute("marker-end",`url(#ah-${key})`);
+      if(out)adj.add(p.dataset.to); if(inc)adj.add(p.dataset.from);
+    });
+    svg.querySelectorAll(".efg").forEach(p=>{
+      p.classList.toggle("out",p.dataset.from===id);
+      p.classList.toggle("in",p.dataset.to===id && p.dataset.from!==id);
+    });
+    svg.querySelectorAll(".node").forEach(n=>{ if(n.dataset.id!==id) n.classList.toggle("adj",adj.has(n.dataset.id)); });
+    // detail
+    const node=byId[id];
+    const outs=machine.edges.filter(e=>e.from===id);
+    const ins=machine.edges.filter(e=>e.to===id);
+    let html=`<div class="dt-name">${id}</div><div class="dt-mean">${node.cn}</div>`;
+    outs.forEach(e=>html+=`<div class="trow out"><span class="arr">离开 →</span><span class="to">${e.to}</span><span class="cond">${e.label}</span></div>`);
+    ins.forEach(e=>html+=`<div class="trow in"><span class="arr">← 进入</span><span class="to">${e.entry?'（初始）':e.from}</span><span class="cond">${e.label}</span></div>`);
+    if(!outs.length && !ins.length) html+='<div class="empty">（无）</div>';
+    detail.innerHTML=html;
+  }
+  svg.querySelectorAll(".node").forEach(n=>n.addEventListener("click",ev=>{ev.stopPropagation();select(n.dataset.id);}));
+  svg.addEventListener("click",clear);
+  return {clear,select};
+}
+
+const ctlRobot=mountMachine("robot","diag-robot","detail-robot");
+const ctlRun=mountMachine("run","diag-run","detail-run");
+const ctlFsm=mountMachine("fsm","diag-fsm","detail-fsm");
+
+/* ============ 生命周期分步动画 ============ */
+const LIFE=[
+  {icon:"🌱",title:"创建机器人",desc:"用户在某账户+交易对上新建机器人，加几个箱体（Box）。还没启动。",
+   chips:[["robot","Robot: PAUSED"]]},
+  {icon:"▶️",title:"点击启动 → 进入监控中",desc:"Robot=RUNNING，订阅行情、建调度器（RobotScheduler）。此时无活跃箱，叫“监控中”——逐 tick 喂价，等价格进入某箱激活窗口。",
+   chips:[["robot","Robot: RUNNING（监控中）"]]},
+  {icon:"🎯",title:"价格进窗 → 激活，生出 Run #1",desc:"activate：从“监控中”生出一个新 Run 与 GridBotRunner，FSM 先进追踪建仓。",
+   chips:[["robot","Robot: RUNNING"],["run","Run #1: TRAILING_ENTRY"],["fsm","FSM: TRAILING_ENTRY"]]},
+  {icon:"📈",title:"回调达标 → 开网格交易",desc:"价格回调到位，FSM→RUNNING，开始挂网格单、逐 tick 算目标仓位并挂/撤单。",
+   chips:[["robot","Robot: RUNNING"],["run","Run #1: RUNNING"],["fsm","FSM: RUNNING"]]},
+  {icon:"💰",title:"分支A · 止盈离场",desc:"仓位止盈清零（d≤0 且无仓），FSM→TAKE_PROFIT（终态）→ 写 Run #1 终态 → 回调清活跃箱，Robot 回到监控中。",
+   chips:[["fsm","FSM: TAKE_PROFIT ★"],["run","Run #1: TAKE_PROFIT"],["robot","Robot: RUNNING（监控中）"]]},
+  {icon:"🛡️",title:"分支B · 止损清算（同样回到监控中）",desc:"价格跌穿满仓线越过止损，FSM→LIQUIDATING→LIQUIDATED（终态）→ Run #1 记 LIQUIDATED → Robot 回监控中等下一次激活。",
+   chips:[["fsm","FSM: LIQUIDATING → LIQUIDATED ★"],["run","Run #1: LIQUIDATED"],["robot","Robot: RUNNING（监控中）"]]},
+  {icon:"🔁",title:"价格再进窗 → Run #2、#3…",desc:"同一台 Robot 一生会经历很多个 Run。每次价格进入激活窗口都生出一个新回合，循环往复。",
+   chips:[["robot","Robot: RUNNING"],["run","Run #2: TRAILING_ENTRY → RUNNING…"]]},
+  {icon:"⏸️",title:"（可选）用户暂停",desc:"pause：保留持仓与 runner 内存，FSM→PAUSED。不是终态，调恢复即可继续。",
+   chips:[["run","Run: PAUSED"],["fsm","FSM: PAUSED"]]},
+  {icon:"⏹️",title:"用户点停止 → STOPPING",desc:"requestStop：立即置 Robot=STOPPING 并即时返回，后台异步跑 runStopJob：撤单 →（可选）平仓 → 复核+抓快照。",
+   chips:[["robot","Robot: STOPPING"],["fsm","FSM: LIQUIDATING（若平仓）"]]},
+  {icon:"🏁",title:"收敛到 STOPPED（并归档）",desc:"停止 job 跑完，Robot=STOPPED（带“停止前持仓”快照 + 可能的告警码）。写 endedAt → 移出主列表进归档，终态不可重启。",
+   chips:[["robot","Robot: STOPPED · 已归档"],["run","Run: STOPPED"]]},
+];
+let li=0,liTimer=null;
+const lifeEl={icon:document.getElementById("lifeIcon"),title:document.getElementById("lifeTitle"),
+  desc:document.getElementById("lifeDesc"),chips:document.getElementById("lifeChips"),
+  bar:document.getElementById("lifeBar"),count:document.getElementById("lifeCount"),
+  prev:document.getElementById("lifePrev"),next:document.getElementById("lifeNext"),play:document.getElementById("lifePlay")};
+function renderLife(){
+  const s=LIFE[li];
+  lifeEl.icon.textContent=s.icon;lifeEl.title.textContent=s.title;lifeEl.desc.textContent=s.desc;
+  lifeEl.chips.innerHTML=s.chips.map(c=>`<span class="chip ${c[0]}">${c[1]}</span>`).join("");
+  lifeEl.bar.style.width=((li+1)/LIFE.length*100)+"%";
+  lifeEl.count.textContent=(li+1)+" / "+LIFE.length;
+  lifeEl.prev.disabled=li===0;lifeEl.next.disabled=li===LIFE.length-1;
+}
+lifeEl.prev.onclick=()=>{if(li>0){li--;renderLife();stopPlay();}};
+lifeEl.next.onclick=()=>{if(li<LIFE.length-1){li++;renderLife();stopPlay();}};
+function stopPlay(){if(liTimer){clearInterval(liTimer);liTimer=null;lifeEl.play.textContent="▶ 自动播放";}}
+lifeEl.play.onclick=()=>{
+  if(liTimer){stopPlay();return;}
+  lifeEl.play.textContent="⏸ 暂停播放";
+  if(li===LIFE.length-1)li=0;renderLife();
+  liTimer=setInterval(()=>{ if(li<LIFE.length-1){li++;renderLife();} else stopPlay(); },2200);
+};
+renderLife();
+
+/* ============ 停止流程进度 ============ */
+const STOP=[
+  {code:"CANCELLING_ORDERS",icon:"🧹",d:"撤销网格挂单（前端显示“正在撤销网格挂单…”）"},
+  {code:"CLOSING_POSITION",icon:"💸",d:"市价平仓（仅当用户选了平仓；显示“正在平仓…”）"},
+  {code:"VERIFYING",icon:"🔍",d:"向交易所复核仓位 + 抓一份持仓快照写库（显示“正在复核仓位…”）"},
+  {code:"STOPPED",icon:"🏁",d:"已到终态。stopStage = null。带“停止前持仓”持久快照，可能附 stopWarning。"},
+];
+const pipe=document.getElementById("stopPipe"),sd=document.getElementById("stopDetail");
+STOP.forEach((s,i)=>{
+  const el=document.createElement("div");el.className="pstage";el.dataset.i=i;
+  el.innerHTML=`<div class="pa">${s.icon}</div><div class="pn">${s.code}</div>`;
+  el.onclick=()=>setStop(i);pipe.appendChild(el);
+});
+function setStop(i){
+  [...pipe.children].forEach((el,j)=>{el.classList.toggle("active",j===i);el.classList.toggle("done",j<i);});
+  sd.innerHTML=`<div class="dt-name">${STOP[i].code}</div><div style="font-size:13.5px;color:var(--fg-1);margin-top:4px">${STOP[i].d}</div>`;
+}
+setStop(0);
+</script>
+</body>
+</html>

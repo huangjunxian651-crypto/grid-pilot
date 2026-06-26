@@ -1,0 +1,338 @@
+// GridPilot Prisma Schema
+// Implements the data model from the GREENFIELD_ARCHITECTURE.md
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String   @id @default(cuid())
+  displayName   String   @default("")
+  email         String   @unique
+  passwordHash  String
+  workspaceSlug String   @default("")
+  language      String   @default("zh")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  configs Box[]
+}
+
+model ExchangeAccount {
+  id          String   @id @default(cuid())
+  exchangeId  String
+  accountId   String
+  label       String
+  apiKey      String
+  apiSecret   String
+  passphrase  String?
+  isActive    Boolean  @default(true)
+  exchangeUid String?
+  createdAt   DateTime @default(now())
+  boxes       Box[]
+  robots      Robot[]
+
+  @@unique([exchangeId, accountId])
+}
+
+model Robot {
+  id          String          @id @default(cuid())
+  accountId   String
+  account     ExchangeAccount @relation(fields: [accountId], references: [id])
+  exchangeUid String?
+  symbol      String
+  direction   String
+  status      String          @default("PAUSED")
+  stopStage         String?
+  stopWarning       String?
+  lastPositionQty   Float?
+  lastEntryPrice    Float?
+  lastUnrealizedPnl Float?
+  lastSnapshotAt    DateTime?
+  activeBoxId String?
+  endedAt     DateTime?
+  createdAt   DateTime        @default(now())
+  boxes       Box[]
+
+  @@index([accountId])
+}
+
+model Box {
+  id                     String          @id @default(cuid())
+  userId                 String?
+  user                   User?           @relation(fields: [userId], references: [id])
+  accountId              String
+  account                ExchangeAccount @relation(fields: [accountId], references: [id])
+  status                 String          @default("CREATED")
+  symbol                 String
+  direction              String
+  takeProfitPrice        Float
+  mainGridCount          Int
+  mainGridStep           Float           @default(0)
+  mainGridPortionSize    Float
+  leverage               Int
+  stopLossGridCount      Int             @default(4)
+  stopLossGridStep       Float
+  isolationStep          Float?
+  activationPrice        Float           @default(0)
+  trailingCallbackRate   Float           @default(0.002)
+  excessProfitMultiplier Float           @default(2.0)
+  reorderThreshold       Float           @default(0.0002)
+  gtcBoundary            Float           @default(0.02)
+  trailingEntry          Boolean         @default(false)
+  trailDistance          Float?
+  entryPrice             Float?
+  aiConfig               Json?
+  enabled                Boolean         @default(true)
+  deletedAt              DateTime?
+  createdAt              DateTime        @default(now())
+  updatedAt              DateTime        @updatedAt
+
+  robotId   String?
+  robot     Robot?          @relation(fields: [robotId], references: [id])
+  runs      Run[]
+  snapshots StateSnapshot[]
+}
+
+model Run {
+  id                String    @id @default(cuid())
+  boxId             String
+  box               Box       @relation(fields: [boxId], references: [id])
+  runCode           String    @unique
+  state             String
+  startedAt         DateTime  @default(now())
+  endedAt           DateTime?
+  exitReason        String?
+  configSnapshot    Json?
+  realizedPnl       Float     @default(0)
+  totalFees         Float     @default(0)
+  totalFunding      Float     @default(0)
+  totalSavings      Float     @default(0)
+  fillCount         Int       @default(0)
+  pnlSignedPosition Float     @default(0)
+  pnlAvgCost        Float     @default(0)
+  orders            Order[]
+  fills             Fill[]
+  balanceSnapshots  RunBalanceSnapshot[]
+
+  @@index([boxId])
+}
+
+model Order {
+  id              String    @id @default(cuid())
+  runId           String
+  run             Run       @relation(fields: [runId], references: [id])
+  exchangeOrderId String?
+  algoOrderId     String?
+  clientOrderId   String?
+  orderType       String
+  side            String
+  qty             Float
+  price           Float?
+  status          String    @default("PENDING")
+  filledQty       Float     @default(0)
+  avgFillPrice    Float?
+  gridIndex       Int?
+  preOrderPosition Float?
+  subGridIndex    Int?
+  isAlgo          Boolean   @default(false)
+  isEntry         Boolean   @default(false)
+  createdAt       DateTime  @default(now())
+  filledAt        DateTime?
+  cancelledAt     DateTime?
+  rejectedReason  String?
+  fills           Fill[]
+
+  @@unique([runId, clientOrderId])
+  @@index([runId, status])
+  @@index([clientOrderId])
+}
+
+model Fill {
+  id               String   @id @default(cuid())
+  orderId          String
+  order            Order    @relation(fields: [orderId], references: [id])
+  runId            String
+  run              Run      @relation(fields: [runId], references: [id])
+  exchangeFillId   String
+  side             String
+  qty              Float
+  price            Float
+  fee              Float    @default(0)
+  feeAsset         String?
+  gridIndex        Int?
+  savings          Float    @default(0)
+  savingsRate      Float    @default(0)
+  avgGridPrice     Float?
+  realizedPnlDelta Float    @default(0)
+  filledAt         DateTime @default(now())
+
+  @@unique([exchangeFillId, orderId])
+  @@index([runId])
+}
+
+// State snapshots for fast recovery (not authoritative)
+model StateSnapshot {
+  id       String @id @default(cuid())
+  configId String
+  config   Box    @relation(fields: [configId], references: [id])
+
+  fsmState     Json
+  position     Json?
+  orderManager Json?
+  sentinel     Json?
+  seq          Int
+
+  createdAt DateTime @default(now())
+
+  @@index([configId, createdAt])
+}
+
+// Event log for debugging and audit trail
+model EventLog {
+  id          String  @id @default(cuid())
+  configId    String
+  sessionCode String?
+
+  eventType String
+  eventData Json
+  seq       Int
+
+  createdAt DateTime @default(now())
+
+  @@index([configId, seq])
+  @@index([configId, createdAt])
+  @@index([sessionCode, eventType])
+}
+
+// Market data for v2 backtesting (reserved)
+model MarketData {
+  id        String   @id @default(cuid())
+  exchange  String
+  symbol    String
+  timestamp DateTime
+  open      Float
+  high      Float
+  low       Float
+  close     Float
+  volume    Float
+  bestBid   Float?
+  bestAsk   Float?
+
+  @@index([exchange, symbol, timestamp])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  type      String // 'alert' | 'alpha' | 'info' | 'warn'
+  title     String
+  body      String
+  read      Boolean  @default(false)
+  rangeId   String? // 关联的机器人 range ID（可选）
+  code      String? // 通知语义码（如 ROBOT_AUTO_PAUSED），前端 i18n 用；null=旧数据走 body
+  params    Json? // code 文案的插值参数（如 {symbol, runCode, reason}）
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([read, createdAt])
+}
+
+// P2-1 权益曲线时序表：AccountSnapshotService 节流落库（5min/点/credential）。
+// 体量极小（3账户月增~26k行），暂不做保留期清理。
+model EquitySnapshot {
+  id                 String   @id @default(cuid())
+  credentialId       String
+  totalEquity        Float
+  totalWalletBalance Float    @default(0)
+  availableUsdt      Float    @default(0)
+  capturedAt         DateTime @default(now())
+
+  @@index([credentialId, capturedAt])
+  @@index([capturedAt])
+}
+
+// 全局单份 AI 配置（提供方 + 密钥）。密钥字段为 CredentialCrypto 加密串，仅经设置页写入、永不明文返回。
+// 每个 Run(Session) 在 START(运行前) / STOP(平仓后) 的账户余额快照。
+// 账户级权益 + 该 symbol 当刻持仓 + 实时价 + 当刻台账，best-effort 写入、不阻塞启停。
+// 归因前提：余额是账户级，同账户多机器人共享，权益差反映整段时间整个账户而非单机器人。
+model RunBalanceSnapshot {
+  id                 String   @id @default(cuid())
+  runId              String
+  run                Run      @relation(fields: [runId], references: [id])
+  event              String // 'START' | 'STOP'
+  capturedAt         DateTime @default(now())
+
+  totalEquity        Float
+  totalWalletBalance Float
+  availableUsdt      Float
+  marginUsed         Float
+
+  symbol             String
+  positionQty        Float
+  entryPrice         Float?
+  unrealizedPnl      Float
+  markPrice          Float
+
+  realizedPnl        Float
+  totalFees          Float
+  totalSavings       Float
+
+  credentialId       String
+  boxId              String
+  robotId            String?
+
+  exitReason         String?
+  liquidationOk      Boolean?
+
+  // 每个 Run 每个 event 至多一条：STOP 在用户停止路径会被 stopBot 与 handleAutoTermination
+  // 同时触发，靠唯一约束 + upsert 幂等去重（last-writer-wins，与 Run.endedAt 最终值一致）。
+  @@unique([runId, event])
+  @@index([credentialId, capturedAt])
+}
+
+model AiSettings {
+  id              String   @id @default("singleton") // 单例行
+  provider        String   @default("anthropic") // anthropic | openai
+  anthropicApiKey  String? // 加密
+  anthropicModel   String?
+  anthropicBaseUrl String?
+  openaiApiKey     String? // 加密
+  openaiModel      String?
+  openaiBaseUrl    String?
+  updatedAt        DateTime @updatedAt
+}
+
+// 每个交易对×方向的「最近一次 AI 箱体分析结果」。后台定时分析 upsert 单行，
+// 前端 AI 推荐页打开即展示。result 存完整结果（windows/vpvr/recommendations/...）。
+// 全局共享、非按用户：分析集为通用 RECOMMENDED_SYMBOLS。若将来要按用户配置个性化，需加租户维度。
+model AiRecommendation {
+  id        String   @id @default(cuid())
+  symbol    String
+  direction String
+  language  String   @default("zh")
+  result    Json
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+
+  @@unique([symbol, direction, language])
+}
+
+/// 永续资金费事件（按 symbol+时间归因到 Run）。attributedRunId 为空=落在无 session 空窗，账户级未归因。
+model FundingEvent {
+  id              String   @id @default(cuid())
+  credentialId    String
+  symbol          String
+  fundingTime     DateTime
+  amount          Float    // 计价币(USDT)，付出为负、收取为正
+  attributedRunId String?
+  createdAt       DateTime @default(now())
+
+  @@unique([credentialId, symbol, fundingTime])
+  @@index([credentialId, fundingTime])
+  @@index([attributedRunId])
+}

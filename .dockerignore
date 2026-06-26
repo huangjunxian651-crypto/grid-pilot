@@ -1,0 +1,12 @@
+**/node_modules
+**/.next
+**/dist
+**/.turbo
+.git
+*.log
+/tmp
+e2e/test-results
+e2e/playwright-report
+**/coverage
+.env
+.DS_Store

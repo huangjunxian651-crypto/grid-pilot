@@ -1,0 +1,190 @@
+# GridPilot
+
+> Plataforma de trading de **cuadrícula dinámica** para contratos perpetuos ETH/USDT · Compatible con Binance / Gate.io / OKX
+> Decide en tiempo real como un trader que vigila el mercado, en lugar de dejar las órdenes colgadas y olvidarse de ellas.
+
+[简体中文](README.md) · [繁體中文](README.zh-TW.md) · [English](README.en.md) · [日本語](README.ja.md) · **Español** · [العربية](README.ar.md) · [Français](README.fr.md) · [Português](README.pt.md) · [Italiano](README.it.md) · [한국어](README.ko.md) · [ไทย](README.th.md) · [Tiếng Việt](README.vi.md)
+
+---
+
+## 📸 Vista previa de la interfaz
+
+| Panel de control · Resumen | Comisiones y reembolsos |
+|:---:|:---:|
+| ![Panel de control de GridPilot](docs/screenshots/es/dashboard.png) | ![Comisiones y reembolsos](docs/screenshots/es/fees.png) |
+
+> Tema de marca verde azulado oscuro · Tipografías Space Grotesk / IBM Plex · 12 idiomas integrados, la interfaz cambia al cambiar de idioma.
+
+## 🎯 ¿Por qué el trading de cuadrícula?
+
+El trading de cuadrícula divide un rango de precios en varias "líneas de cuadrícula": compra cada vez que el precio baja un nivel y vende cada vez que sube uno; **en mercados laterales, compra barato y vende caro repetidamente, convirtiendo la propia volatilidad en ganancia**. No predice subidas ni bajadas, solo gana el diferencial de las oscilaciones de ida y vuelta dentro del rango, por lo que resulta especialmente adecuado para mercados sin una tendencia clara que se mueven arriba y abajo.
+
+Comparado con "comprar y mantener": comprar y mantener solo genera ganancias cuando el precio finalmente sube; la cuadrícula acumula continuamente pequeñas ganancias durante las oscilaciones laterales. El precio a pagar es la necesidad de gestionar las órdenes de forma continua y controlar el riesgo, que es justo la parte que GridPilot automatiza por ti.
+
+> ⚠️ El trading de cuadrícula no garantiza ganancias: durante una caída unidireccional puede haber pérdidas no realizadas, y el apalancamiento amplifica el riesgo. Comprende bien la estrategia antes de invertir.
+
+## 🚀 Nuestras 5 grandes innovaciones frente a la cuadrícula nativa de los exchanges
+
+Los bots de cuadrícula integrados en los exchanges son, en esencia, "colocar un lote de órdenes una sola vez, dejarlas fijas y esperar a que el mercado las ejecute". La diferencia central de GridPilot es **simular mediante software a un trader experimentado que vigila el mercado**:
+
+| Dimensión | Cuadrícula nativa del exchange | GridPilot |
+|------|----------------|-----------|
+| **Forma de operar** | Órdenes estáticas en lote, sin moverse una vez colocadas | Vigilancia automatizada: en cada actualización del mercado reevalúa antes de actuar, colocando/modificando/cancelando órdenes dinámicamente; en cualquier momento puede no haber órdenes colgadas |
+| **Comisiones** | No distingue entre ejecución activa y pasiva | Precios en tres rangos: en la zona POC coloca órdenes Maker (ahorra ~0,03 %), en la zona GTC se permite ejecutar como Taker para asegurar ganancias adicionales, y en la zona de cortocircuito rechaza órdenes |
+| **Momento de apertura** | Abre posición de inmediato al entrar en el rango | Apertura por seguimiento: al entrar en el rango primero persigue el punto bajo y solo abre posición tras confirmar el rebote, evitando quedar atrapado en una posición alta nada más abrir |
+| **Stop-loss** | Cierre único en un solo precio | Reducción escalonada con órdenes algorítmicas como amortiguador; si el precio rompe brevemente a la baja y luego rebota, la posición residual se beneficia directamente y se ahorra la comisión de reconstrucción |
+| **Adaptación al mercado** | Rango único fijo | Múltiples rangos no superpuestos: se activa el rango en el que entra el precio y los demás quedan inactivos |
+
+1. **Mentalidad de vigilar primero y decidir después**: el sistema evalúa la relación entre el precio actual y el precio objetivo cada vez que recibe datos de mercado; si las condiciones son desfavorables, se detiene y observa, y solo cuando son favorables se posiciona al mejor precio; ante saltos bruscos de precio puede incluso capturar un diferencial adicional que supera el paso de la cuadrícula.
+2. **Maker prioritario / Taker permitido / cortocircuito desfavorable**: por defecto coloca órdenes Maker Post-Only para aprovechar tarifas más bajas; solo ejecuta como Taker de forma activa cuando la ganancia adicional supera el coste de ser Taker y la oportunidad es fugaz; cuando el precio actual es más caro que el precio de compra objetivo, rechaza la orden directamente para evitar comprar caro y vender barato.
+3. **Apertura por seguimiento**: evita abrir en el techo y quedar atrapado.
+4. **Stop-loss con órdenes algorítmicas escalonadas**: conserva la capacidad de recuperación tras un rebote.
+5. **Múltiples rangos de precio**: a donde vaya el precio, allí va la estrategia.
+
+> Consulta el principio completo de la estrategia en [`docs/STRATEGY_SPEC.md`](docs/STRATEGY_SPEC.md).
+
+## ✨ Resumen de funciones
+
+- **Múltiples rangos de precio**: preconfigura varios rangos no superpuestos (por ejemplo, 2000–2600, 2600–3200); se activa el rango en el que entra el precio
+- **Apertura por seguimiento**: sigue el punto bajo y solo abre posición tras confirmar el rebote
+- **Precios dinámicos en tres rangos**: Maker en la zona POC, bloqueo de ganancias adicionales en la zona GTC, rechazo de órdenes en la zona de cortocircuito
+- **Amortiguador de stop-loss escalonado**: varios niveles de órdenes condicionales algorítmicas que reducen la posición de forma escalonada por debajo de la cuadrícula principal
+- **Notificaciones en tiempo real por WebSocket**: Ticker / ejecuciones / eventos de la máquina de estados sincronizados en tiempo real con el frontend
+- **Soporte multi-exchange**: interfaz de adaptador unificada, compatible con Binance, Gate.io y OKX
+- **Interfaz multilingüe**: 12 idiomas integrados
+
+## 💰 Entiende las comisiones y ahorra usando un código de invitación al registrarte (patrocinador rebateto.me)
+
+Las comisiones las cobra el exchange; **GridPilot no se queda ni un céntimo**. En una misma operación, una orden Maker cuesta ≈0,02 % y una orden Taker ≈0,05 %. Con apalancamiento y cuadrículas de alta frecuencia, las comisiones se amplifican silenciosamente y, acumuladas con el tiempo, no son pequeñas; GridPilot coloca órdenes Maker por ti por defecto, ahorrando unos 0,03 % por operación, y solo ejecuta como Taker cuando la oportunidad es fugaz.
+
+Y un paso más allá: **al registrarte en un exchange, basta con introducir un código de reembolso para que se te devuelva a largo plazo alrededor del 20 % de las comisiones ya pagadas (40 % en Gate), de forma automática**, lo que equivale a un descuento adicional en cada operación.
+
+> ⚠️ Cada exchange solo se puede registrar una vez, y el reembolso solo puede vincularse en el momento del registro; **las cuentas antiguas no pueden añadirlo después: esta es la única oportunidad**.
+
+**Patrocinador [rebateto.me](https://rebateto.me)** recopila y mantiene los accesos de registro con reembolso de cada exchange. Al registrarte, utiliza el código de invitación:
+
+| Exchange | Código de invitación | Porcentaje de reembolso |
+|--------|--------|----------|
+| Binance | `fanwo20` | 20% |
+| OKX | `fangeiwo` | 20% |
+| Gate.io | `fangeiwo` | 40% |
+
+> Recuerda introducir manualmente el código de invitación al registrarte desde la App; si lo omites, no obtendrás el reembolso. Cada documento de identidad permite abrir una sola cuenta por exchange.
+
+## 📦 Instalación
+
+**Dependencias previas**: Node.js ≥ 20, pnpm ≥ 9, Docker
+
+### Opción 1: Stack completo con Docker en un solo comando (recomendado para autoalojamiento)
+
+```bash
+git clone <repo-url> && cd grid-pilot
+cp .env.example .env
+# 生成加密密钥并填入 .env 的 ENCRYPTION_KEY
+openssl rand -base64 32
+# 一键起 PostgreSQL + Redis + API + Web（自动执行数据库迁移）
+docker compose --profile full up --build -d
+```
+
+Tras el arranque, accede a http://localhost:3300 .
+
+> Sin `--profile full`, `docker compose up` solo arranca la infraestructura base de PostgreSQL + Redis, para desarrollo local.
+
+### Opción 2: Instalación local (recomendado para desarrollo)
+
+```bash
+git clone <repo-url> && cd grid-pilot
+pnpm install
+cp .env.example .env        # 按需调整端口/密钥
+pnpm dev                    # 先起 docker 基础设施，再起 API + Web
+```
+
+| Servicio | Dirección | Opción de configuración |
+|------|------|--------|
+| Frontend | http://localhost:3300 | `WEB_PORT` / `WEB_HOST` |
+| API backend | http://localhost:3301 | `API_PORT` / `API_HOST` |
+| PostgreSQL | localhost:25432 | `DB_PORT` |
+| Redis | localhost:26379 | `REDIS_PORT` |
+
+Arranque individual:
+
+```bash
+pnpm dev:infra        # 仅 PostgreSQL + Redis
+pnpm dev:api          # 仅后端
+pnpm dev:web          # 仅前端
+pnpm dev:skip-infra   # API + Web，跳过 docker
+```
+
+## 🕹️ Instrucciones de uso
+
+1. **Conecta el exchange**: introduce la API Key/Secret en los ajustes. **Concede únicamente permiso de trading de contratos; nunca habilites el permiso de retiro.**
+2. **Configura la cuadrícula**: elige el par de trading y el rango de precios, y define el número de niveles de la cuadrícula principal, el paso, la cantidad por nivel, el apalancamiento, el amortiguador de stop-loss y los parámetros de apertura por seguimiento.
+3. **Inicia el bot**: entra en la apertura por seguimiento → en ejecución; el frontend muestra en tiempo real el mercado, las órdenes, las ejecuciones y la máquina de estados.
+4. **Monitorea y cierra**: al activarse el take-profit, se detiene la acumulación y se cierra; al activarse el amortiguador de stop-loss, se reduce la posición de forma escalonada.
+
+Parámetros clave:
+
+| Parámetro | Descripción |
+|------|------|
+| `takeProfitPrice` | Precio de take-profit (límite superior del rango de take-profit) |
+| `mainGridCount` / `mainGridStep` | Número de niveles de la cuadrícula principal / paso por nivel (USDT) |
+| `mainGridPortionSize` | Cantidad de orden por nivel |
+| `leverage` | Multiplicador de apalancamiento |
+| `stopLossGridCount` / `stopLossGridStep` | Número de niveles / paso de la zona de amortiguación de stop-loss |
+| `activationPrice` / `trailingCallbackRate` | Precio de activación de la apertura por seguimiento / amplitud de retroceso |
+| `excessProfitMultiplier` | Multiplicador de activación de la zona GTC (umbral de ganancia adicional) |
+
+Consulta todos los parámetros en [`docs/STRATEGY_SPEC.md`](docs/STRATEGY_SPEC.md).
+
+## ⚠️ Advertencias
+
+- **Descargo de responsabilidad de riesgo**: el trading de contratos implica alto apalancamiento y alto riesgo, y puede provocar la pérdida total del capital. Este proyecto es una herramienta de trading de código abierto, **no constituye ningún consejo de inversión** y no se responsabiliza de las ganancias ni de las pérdidas. Verifícalo a fondo primero con poco capital o en la testnet del exchange.
+- **Permisos de API**: habilita solo el permiso de trading de contratos; **no** habilites el permiso de retiro.
+- **Restricción de un solo runner**: para un mismo par de trading de una misma cuenta de exchange, solo puede ejecutarse un bot a la vez.
+- **Momento del reembolso**: el código de invitación solo puede vincularse en el momento del registro; las cuentas antiguas no pueden añadirlo después.
+- **Seguridad de las claves**: `ENCRYPTION_KEY` se utiliza para cifrar las credenciales del exchange; usa siempre una clave fuerte generada aleatoriamente y guárdala con cuidado.
+- **Conflicto de puertos**: si los puertos locales 3300/3301 están ocupados por `pnpm dev`, entrarán en conflicto con los contenedores del stack completo de Docker; detén primero los procesos locales antes de arrancar los contenedores, o modifica la configuración de puertos en `.env`.
+
+## 🏗️ Stack tecnológico y arquitectura
+
+| Capa | Tecnología |
+|------|------|
+| Frontend | Next.js 16 · React 19 · Tailwind CSS v4 · Zustand · React Query · Recharts |
+| Backend | NestJS 10 · Prisma 5 · BullMQ · Socket.IO |
+| Infraestructura | PostgreSQL 16 · Redis 7 · Docker Compose |
+| Compartido | TypeScript · pnpm Workspaces · Turborepo |
+
+```
+apps/web/          # Next.js 前端（暗色主题，12 语）
+apps/api/          # NestJS 后端
+packages/shared-types/  # 前后端共享类型
+docs/              # STRATEGY_SPEC.md（策略规格）· ARCHITECTURE.md（组件映射）
+docker-compose.yml # 默认基础设施；--profile full 全栈
+```
+
+**Máquina de estados de la estrategia**: `TRAILING_ENTRY → RUNNING → LIQUIDATING → LIQUIDATED`; `RUNNING` puede ramificarse a `TAKE_PROFIT`; las ramas operativas incluyen `PAUSED` (se puede restablecer con `USER_RESUME`), `CANCELLED` y `HOLD`.
+
+**Comandos de desarrollo**:
+
+```bash
+pnpm dev          # 一键起所有服务
+pnpm build        # 构建
+pnpm test         # 测试
+pnpm lint         # Lint
+```
+
+**Base de datos** (desarrollo local):
+
+```bash
+cd apps/api
+pnpm prisma migrate dev    # 执行迁移
+pnpm prisma studio         # 查看数据
+```
+
+## Índice de documentación
+
+| Documento | Descripción |
+|------|------|
+| [`docs/STRATEGY_SPEC.md`](docs/STRATEGY_SPEC.md) | Especificación completa de la estrategia (referencia autorizada) |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Índice de mapeo de componentes de código a secciones de la especificación |
+| [`docs/fees-and-funding.md`](docs/fees-and-funding.md) | Explicación de comisiones y tarifas de financiación |

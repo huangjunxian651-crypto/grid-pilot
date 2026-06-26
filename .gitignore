@@ -1,0 +1,24 @@
+node_modules
+package-lock.json
+.claude/
+.claire/
+.DS_Store
+**/.DS_Store
+docs/todo_list.txt
+**/CLAUDE.md
+dist
+.env
+.worktrees/
+.turbo/
+exchange_accounts.md
+.env.testnet
+.env.local
+
+# Local one-off debug scripts (may contain decrypted credentials / keys — never commit)
+apps/api/scripts/decrypt-credentials.ts
+apps/api/scripts/test-gateio-ws-auth.ts
+accounts.txt
+e2e/reconcile/out/
+
+# Superpowers brainstorm scratch
+.superpowers/
