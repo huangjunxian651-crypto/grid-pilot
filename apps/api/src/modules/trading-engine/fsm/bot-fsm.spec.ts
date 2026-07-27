@@ -17,6 +17,7 @@ describe('BotFsm', () => {
       const result = fsm.transition(state, { type: 'TICK', price: 1955, timestamp: Date.now() }, {
         takeProfitPrice: 2200,
         mainGridDepth: 360,
+        boxDepth: 400,
         stopLossGridCount: 4,
         direction: 'LONG',
       });
@@ -35,6 +36,7 @@ describe('BotFsm', () => {
       const result = fsm.transition(state, { type: 'TICK', price: 1952, timestamp: Date.now() }, {
         takeProfitPrice: 2200,
         mainGridDepth: 360,
+        boxDepth: 400,
         stopLossGridCount: 4,
         direction: 'LONG',
       });
@@ -51,6 +53,7 @@ describe('BotFsm', () => {
       const result = fsm.transition(state, { type: 'TICK', price: 1940, timestamp: Date.now() }, {
         takeProfitPrice: 2200,
         mainGridDepth: 360,
+        boxDepth: 400,
         stopLossGridCount: 4,
         direction: 'LONG',
       });
@@ -69,6 +72,7 @@ describe('BotFsm', () => {
       const result = fsm.transition(state, { type: 'TICK', price: 2045, timestamp: Date.now() }, {
         takeProfitPrice: 1840,
         mainGridDepth: 360,
+        boxDepth: 400,
         stopLossGridCount: 4,
         direction: 'SHORT',
       });
@@ -87,6 +91,7 @@ describe('BotFsm', () => {
       const result = fsm.transition(state, { type: 'TICK', price: 2048, timestamp: Date.now() }, {
         takeProfitPrice: 1840,
         mainGridDepth: 360,
+        boxDepth: 400,
         stopLossGridCount: 4,
         direction: 'SHORT',
       });
@@ -103,6 +108,7 @@ describe('BotFsm', () => {
       const result = fsm.transition(state, { type: 'TICK', price: 2060, timestamp: Date.now() }, {
         takeProfitPrice: 1840,
         mainGridDepth: 360,
+        boxDepth: 400,
         stopLossGridCount: 4,
         direction: 'SHORT',
       });
@@ -121,6 +127,7 @@ describe('BotFsm', () => {
       const result = fsm.transition(state, { type: 'TICK', price: 2021, timestamp: Date.now() }, {
         takeProfitPrice: 2200,
         mainGridDepth: 360,
+        boxDepth: 400,
         stopLossGridCount: 4,
         direction: 'LONG',
       });
@@ -138,6 +145,7 @@ describe('BotFsm', () => {
       const result = fsm.transition(state, { type: 'TICK', price: 1999, timestamp: Date.now() }, {
         takeProfitPrice: 1840,
         mainGridDepth: 360,
+        boxDepth: 400,
         stopLossGridCount: 4,
         direction: 'SHORT',
       });
@@ -155,6 +163,7 @@ describe('BotFsm', () => {
       const result = fsm.transition(state, { type: 'TICK', price: 1900, timestamp: Date.now() }, {
         takeProfitPrice: 2200,
         mainGridDepth: 360,
+        boxDepth: 400,
         stopLossGridCount: 4,
         direction: 'LONG',
         activationPrice: 2500,
@@ -173,6 +182,7 @@ describe('BotFsm', () => {
       const result = fsm.transition(state, { type: 'USER_LIQUIDATE' }, {
         takeProfitPrice: 2200,
         mainGridDepth: 360,
+        boxDepth: 400,
         stopLossGridCount: 4,
         direction: 'LONG',
       });
@@ -190,6 +200,7 @@ describe('BotFsm', () => {
       const result = fsm.transition(state, { type: 'USER_PAUSE' }, {
         takeProfitPrice: 2200,
         mainGridDepth: 360,
+        boxDepth: 400,
         stopLossGridCount: 4,
         direction: 'LONG',
       });
@@ -207,10 +218,48 @@ describe('BotFsm', () => {
       const result = fsm.transition(state, { type: 'ERROR_FATAL', error: { message: 'crash', code: 'FATAL' } }, {
         takeProfitPrice: 2200,
         mainGridDepth: 360,
+        boxDepth: 400,
         stopLossGridCount: 4,
         direction: 'LONG',
       });
       expect(result.newState.kind).toBe('PAUSED');
+    });
+
+    it('should stay in TRAILING_ENTRY when price is beyond fullPositionPrice but still within the stop-loss zone (regression guard, was: incorrectly liquidated at fullPositionPrice)', () => {
+      const state: BotFsmState = {
+        kind: 'TRAILING_ENTRY',
+        entryPrice: 2000,
+        extremePrice: 1900,
+        trailingCallbackRate: 0.002,
+      };
+      // fullPositionPrice = 1840 (d=360); price=1839 → d=361, just past mainGridDepth but well
+      // short of boxDepth=400 (liquidationPrice=1800). Must stay in TRAILING_ENTRY, not liquidate.
+      const result = fsm.transition(state, { type: 'TICK', price: 1839, timestamp: Date.now() }, {
+        takeProfitPrice: 2200,
+        mainGridDepth: 360,
+        boxDepth: 400,
+        stopLossGridCount: 4,
+        direction: 'LONG',
+      });
+      expect(result.newState.kind).toBe('TRAILING_ENTRY');
+    });
+
+    it('should transition to LIQUIDATING when price crosses boxDepth (liquidationPrice) before entry', () => {
+      const state: BotFsmState = {
+        kind: 'TRAILING_ENTRY',
+        entryPrice: 2000,
+        extremePrice: 1900,
+        trailingCallbackRate: 0.002,
+      };
+      // boxDepth=400 → liquidationPrice=1800; price=1799 → d=401 > boxDepth
+      const result = fsm.transition(state, { type: 'TICK', price: 1799, timestamp: Date.now() }, {
+        takeProfitPrice: 2200,
+        mainGridDepth: 360,
+        boxDepth: 400,
+        stopLossGridCount: 4,
+        direction: 'LONG',
+      });
+      expect(result.newState.kind).toBe('LIQUIDATING');
     });
   });
 
@@ -220,6 +269,7 @@ describe('BotFsm', () => {
       const result = fsm.transition(state, { type: 'TICK', price: 2000, timestamp: Date.now() }, {
         takeProfitPrice: 2200,
         mainGridDepth: 360,
+        boxDepth: 400,
         stopLossGridCount: 4,
         direction: 'LONG',
       });
@@ -231,21 +281,39 @@ describe('BotFsm', () => {
       const result = fsm.transition(state, { type: 'TICK', price: 2200, timestamp: Date.now() }, {
         takeProfitPrice: 2200,
         mainGridDepth: 360,
+        boxDepth: 400,
         stopLossGridCount: 4,
         direction: 'LONG',
       });
       expect(result.newState.kind).toBe('TAKE_PROFIT');
     });
 
-    it('should transition to LIQUIDATING when price < fullPositionPrice and stopLossGridCount > 0 (STRATEGY_SPEC §8.6)', () => {
+    it('should stay in RUNNING when price is beyond fullPositionPrice but still within the stop-loss zone (regression guard: LIQUIDATING must trigger at boxDepth/liquidationPrice, not at fullPositionPrice)', () => {
       const state: BotFsmState = { kind: 'RUNNING', since: Date.now() };
+      // fullPositionPrice = 1840 (d=360); price=1839 → d=361, just past mainGridDepth but
+      // boxDepth=400 (liquidationPrice=1800) has not been reached yet.
       const result = fsm.transition(state, { type: 'TICK', price: 1839, timestamp: Date.now() }, {
         takeProfitPrice: 2200,
         mainGridDepth: 360,
+        boxDepth: 400,
+        stopLossGridCount: 4,
+        direction: 'LONG',
+      });
+      expect(result.newState.kind).toBe('RUNNING');
+    });
+
+    it('should transition to LIQUIDATING when price crosses boxDepth (liquidationPrice) and stopLossGridCount > 0', () => {
+      const state: BotFsmState = { kind: 'RUNNING', since: Date.now() };
+      // boxDepth=400 → liquidationPrice=1800; price=1799 → d=401 > boxDepth
+      const result = fsm.transition(state, { type: 'TICK', price: 1799, timestamp: Date.now() }, {
+        takeProfitPrice: 2200,
+        mainGridDepth: 360,
+        boxDepth: 400,
         stopLossGridCount: 4,
         direction: 'LONG',
       });
       expect(result.newState.kind).toBe('LIQUIDATING');
+      expect(result.action).toBe('LIQUIDATE_ALL');
     });
 
     it('should stay in RUNNING when price < fullPositionPrice but stopLossGridCount === 0 (no-stop-loss mode, STRATEGY_SPEC §8.6)', () => {
@@ -253,6 +321,7 @@ describe('BotFsm', () => {
       const result = fsm.transition(state, { type: 'TICK', price: 1839, timestamp: Date.now() }, {
         takeProfitPrice: 2200,
         mainGridDepth: 360,
+        boxDepth: 400,
         stopLossGridCount: 0,
         direction: 'LONG',
       });
@@ -265,6 +334,7 @@ describe('BotFsm', () => {
       const result = fsm.transition(state, { type: 'TICK', price: 1840, timestamp: Date.now() }, {
         takeProfitPrice: 1840,
         mainGridDepth: 360,
+        boxDepth: 400,
         stopLossGridCount: 4,
         direction: 'SHORT',
       }, { baseAssetQty: 0 });
@@ -276,17 +346,34 @@ describe('BotFsm', () => {
       const result = fsm.transition(state, { type: 'TICK', price: 1840, timestamp: Date.now() }, {
         takeProfitPrice: 1840,
         mainGridDepth: 360,
+        boxDepth: 400,
         stopLossGridCount: 4,
         direction: 'SHORT',
       }, { baseAssetQty: -0.05 });
       expect(result.newState.kind).toBe('RUNNING');
     });
 
-    it('SHORT: should transition to LIQUIDATING when price > fullPositionPrice and stopLossGridCount > 0 (STRATEGY_SPEC §8.6)', () => {
+    it('SHORT: should stay in RUNNING when price is beyond fullPositionPrice but still within the stop-loss zone (regression guard)', () => {
       const state: BotFsmState = { kind: 'RUNNING', since: Date.now() };
+      // fullPositionPrice = 2200 (d=360); price=2201 → d=361, just past mainGridDepth but
+      // boxDepth=400 (liquidationPrice=2240) has not been reached yet.
       const result = fsm.transition(state, { type: 'TICK', price: 2201, timestamp: Date.now() }, {
         takeProfitPrice: 1840,
         mainGridDepth: 360,
+        boxDepth: 400,
+        stopLossGridCount: 4,
+        direction: 'SHORT',
+      });
+      expect(result.newState.kind).toBe('RUNNING');
+    });
+
+    it('SHORT: should transition to LIQUIDATING when price crosses boxDepth (liquidationPrice) and stopLossGridCount > 0', () => {
+      const state: BotFsmState = { kind: 'RUNNING', since: Date.now() };
+      // boxDepth=400 → liquidationPrice=2240; price=2241 → d=401 > boxDepth
+      const result = fsm.transition(state, { type: 'TICK', price: 2241, timestamp: Date.now() }, {
+        takeProfitPrice: 1840,
+        mainGridDepth: 360,
+        boxDepth: 400,
         stopLossGridCount: 4,
         direction: 'SHORT',
       });
@@ -298,6 +385,7 @@ describe('BotFsm', () => {
       const result = fsm.transition(state, { type: 'TICK', price: 2201, timestamp: Date.now() }, {
         takeProfitPrice: 1840,
         mainGridDepth: 360,
+        boxDepth: 400,
         stopLossGridCount: 0,
         direction: 'SHORT',
       });
@@ -309,6 +397,7 @@ describe('BotFsm', () => {
       const result = fsm.transition(state, { type: 'USER_PAUSE' }, {
         takeProfitPrice: 2200,
         mainGridDepth: 360,
+        boxDepth: 400,
         stopLossGridCount: 4,
         direction: 'LONG',
       });
@@ -320,6 +409,7 @@ describe('BotFsm', () => {
       const result = fsm.transition(state, { type: 'USER_LIQUIDATE' }, {
         takeProfitPrice: 2200,
         mainGridDepth: 360,
+        boxDepth: 400,
         stopLossGridCount: 4,
         direction: 'LONG',
       });
@@ -331,6 +421,7 @@ describe('BotFsm', () => {
       const result = fsm.transition(state, { type: 'ERROR_FATAL', error: { message: 'crash', code: 'FATAL' } }, {
         takeProfitPrice: 2200,
         mainGridDepth: 360,
+        boxDepth: 400,
         stopLossGridCount: 4,
         direction: 'LONG',
       });
@@ -344,6 +435,7 @@ describe('BotFsm', () => {
       const result = fsm.transition(state, { type: 'TICK', price: 2199, timestamp: Date.now() }, {
         takeProfitPrice: 2200,
         mainGridDepth: 360,
+        boxDepth: 400,
         stopLossGridCount: 4,
         direction: 'LONG',
       });
@@ -355,6 +447,7 @@ describe('BotFsm', () => {
       const result = fsm.transition(state, { type: 'TICK', price: 2200, timestamp: Date.now() }, {
         takeProfitPrice: 2200,
         mainGridDepth: 360,
+        boxDepth: 400,
         stopLossGridCount: 4,
         direction: 'LONG',
       });
@@ -366,6 +459,7 @@ describe('BotFsm', () => {
       const result = fsm.transition(state, { type: 'USER_RESUME' }, {
         takeProfitPrice: 2200,
         mainGridDepth: 360,
+        boxDepth: 400,
         stopLossGridCount: 4,
         direction: 'LONG',
       });
@@ -379,7 +473,7 @@ describe('BotFsm', () => {
       const result = fsm.transition(
         state,
         { type: 'ORDER_UPDATE', orderId: 'o1', status: 'FILLED', filledQty: 1 },
-        { takeProfitPrice: 2200, mainGridDepth: 360, stopLossGridCount: 4, direction: 'LONG' },
+        { takeProfitPrice: 2200, mainGridDepth: 360, boxDepth: 400, stopLossGridCount: 4, direction: 'LONG' },
         { baseAssetQty: 0 },
       );
       expect(result.newState.kind).toBe('LIQUIDATED');
@@ -390,7 +484,7 @@ describe('BotFsm', () => {
       const result = fsm.transition(
         state,
         { type: 'ORDER_UPDATE', orderId: 'o1', status: 'FILLED', filledQty: 0.5 },
-        { takeProfitPrice: 2200, mainGridDepth: 360, stopLossGridCount: 4, direction: 'LONG' },
+        { takeProfitPrice: 2200, mainGridDepth: 360, boxDepth: 400, stopLossGridCount: 4, direction: 'LONG' },
         { baseAssetQty: 0.3 },
       );
       expect(result.newState.kind).toBe('LIQUIDATING');
@@ -401,7 +495,7 @@ describe('BotFsm', () => {
       const result = fsm.transition(
         state,
         { type: 'ORDER_UPDATE', orderId: 'o1', status: 'FILLED', filledQty: 1 },
-        { takeProfitPrice: 2200, mainGridDepth: 360, stopLossGridCount: 4, direction: 'LONG' },
+        { takeProfitPrice: 2200, mainGridDepth: 360, boxDepth: 400, stopLossGridCount: 4, direction: 'LONG' },
       );
       expect(result.newState.kind).toBe('LIQUIDATED');
     });
@@ -413,7 +507,7 @@ describe('BotFsm', () => {
       const result = fsm.transition(
         state,
         { type: 'TICK', price: 2200, timestamp: Date.now() },
-        { takeProfitPrice: 2200, mainGridDepth: 360, stopLossGridCount: 4, direction: 'LONG' },
+        { takeProfitPrice: 2200, mainGridDepth: 360, boxDepth: 400, stopLossGridCount: 4, direction: 'LONG' },
         { baseAssetQty: 0.5 },
       );
       expect(result.newState.kind).toBe('RUNNING');
@@ -424,7 +518,7 @@ describe('BotFsm', () => {
       const result = fsm.transition(
         state,
         { type: 'TICK', price: 2200, timestamp: Date.now() },
-        { takeProfitPrice: 2200, mainGridDepth: 360, stopLossGridCount: 4, direction: 'LONG' },
+        { takeProfitPrice: 2200, mainGridDepth: 360, boxDepth: 400, stopLossGridCount: 4, direction: 'LONG' },
         { baseAssetQty: 0 },
       );
       expect(result.newState.kind).toBe('TAKE_PROFIT');
@@ -437,6 +531,7 @@ describe('BotFsm', () => {
       const result = fsm.transition(state, { type: 'USER_RESUME' }, {
         takeProfitPrice: 2200,
         mainGridDepth: 360,
+        boxDepth: 400,
         stopLossGridCount: 4,
         direction: 'LONG',
       });
@@ -449,6 +544,7 @@ describe('BotFsm', () => {
       const result = fsm.transition(state, { type: 'USER_RESUME' }, {
         takeProfitPrice: 2200,
         mainGridDepth: 360,
+        boxDepth: 400,
         stopLossGridCount: 4,
         direction: 'LONG',
       }, { baseAssetQty: 0.05 });
@@ -461,6 +557,7 @@ describe('BotFsm', () => {
       const result = fsm.transition(state, { type: 'USER_RESUME' }, {
         takeProfitPrice: 2200,
         mainGridDepth: 360,
+        boxDepth: 400,
         stopLossGridCount: 4,
         direction: 'LONG',
       }, { baseAssetQty: 0 });
@@ -473,8 +570,8 @@ describe('BotFsm', () => {
       const state: BotFsmState = { kind: 'LIQUIDATING', startTime: Date.now(), attemptCount: 0 };
       const result = fsm.transition(
         state,
-        { type: 'TICK', price: 1839, timestamp: Date.now() },
-        { takeProfitPrice: 2200, mainGridDepth: 360, stopLossGridCount: 4, direction: 'LONG' },
+        { type: 'TICK', price: 1799, timestamp: Date.now() },
+        { takeProfitPrice: 2200, mainGridDepth: 360, boxDepth: 400, stopLossGridCount: 4, direction: 'LONG' },
         { baseAssetQty: 0 },
       );
       expect(result.newState.kind).toBe('LIQUIDATED');
@@ -484,8 +581,8 @@ describe('BotFsm', () => {
       const state: BotFsmState = { kind: 'LIQUIDATING', startTime: Date.now(), attemptCount: 0 };
       const result = fsm.transition(
         state,
-        { type: 'TICK', price: 1839, timestamp: Date.now() },
-        { takeProfitPrice: 2200, mainGridDepth: 360, stopLossGridCount: 4, direction: 'LONG' },
+        { type: 'TICK', price: 1799, timestamp: Date.now() },
+        { takeProfitPrice: 2200, mainGridDepth: 360, boxDepth: 400, stopLossGridCount: 4, direction: 'LONG' },
         { baseAssetQty: 0.3 },
       );
       expect(result.newState.kind).toBe('LIQUIDATING');
@@ -496,7 +593,7 @@ describe('BotFsm', () => {
       const result = fsm.transition(
         state,
         { type: 'POSITION_UPDATE', position: { symbol: 'ETH/USDT', baseAssetQty: 0, quoteAssetQty: 0, entryPrice: 0, leverage: 1, marginType: 'CROSS' } },
-        { takeProfitPrice: 2200, mainGridDepth: 360, stopLossGridCount: 4, direction: 'LONG' },
+        { takeProfitPrice: 2200, mainGridDepth: 360, boxDepth: 400, stopLossGridCount: 4, direction: 'LONG' },
         { baseAssetQty: 0 },
       );
       expect(result.newState.kind).toBe('LIQUIDATED');
@@ -509,6 +606,7 @@ describe('BotFsm', () => {
       const result = fsm.transition(state, { type: 'TICK', price: 2000, timestamp: Date.now() }, {
         takeProfitPrice: 2200,
         mainGridDepth: 360,
+        boxDepth: 400,
         stopLossGridCount: 4,
         direction: 'LONG',
       });
@@ -522,6 +620,7 @@ describe('BotFsm', () => {
       const result = fsm.transition(state, { type: 'TICK', price: 2000, timestamp: Date.now() }, {
         takeProfitPrice: 2200,
         mainGridDepth: 360,
+        boxDepth: 400,
         stopLossGridCount: 4,
         direction: 'LONG',
       });

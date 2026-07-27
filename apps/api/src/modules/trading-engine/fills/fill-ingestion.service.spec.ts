@@ -79,6 +79,17 @@ describe('FillIngestionService', () => {
     expect(created.fee).toBe(0); // commission undefined → 0
   });
 
+  it('创建 Fill 行时写入 notional = qty * price（供成交额排序使用）', async () => {
+    const order = { id: 'o-notional', runId: 'run1', clientOrderId: 'c-notional', side: 'BUY', qty: 0.01, gridIndex: 2, filledQty: 0, avgFillPrice: null, status: 'PENDING', exchangeOrderId: null, filledAt: null };
+    prisma.order.findFirst.mockResolvedValue(order);
+    prisma.fill.findUnique.mockResolvedValue(null);
+
+    await svc.ingest('RC1', { orderId: 'ex-notional', fillId: 't-notional', qty: 0.02, price: 1950, timestamp: 1, clientOrderId: 'c-notional', side: 'BUY' });
+
+    const created = prisma.fill.create.mock.calls[0][0].data;
+    expect(created.notional).toBeCloseTo(0.02 * 1950, 8);
+  });
+
   it('SELL 成交用 computeFillSavings 落 Fill.avgGridPrice 与 savings（按格价均价口径）', async () => {
     const sellRun = {
       ...RUN,
@@ -341,7 +352,7 @@ describe('FillIngestionService', () => {
     prisma.run.findUnique.mockResolvedValue({ ...RUN, box: { symbol: 'ETH/USDT' } });
     (prisma as any).$transaction.mockRejectedValueOnce(Object.assign(new Error('Unique constraint failed'), { code: 'P2002' }));
 
-    await expect(svc.ingest('RC1', { orderId: 'exP', fillId: 'tP', qty: 0.01, price: 2000, timestamp: 1, clientOrderId: 'cP', side: 'BUY' })).resolves.toBeUndefined();
+    await expect(svc.ingest('RC1', { orderId: 'exP', fillId: 'tP', qty: 0.01, price: 2000, timestamp: 1, clientOrderId: 'cP', side: 'BUY' })).resolves.toBe(false);
   });
 
   it('非 P2002 错误仍抛出', async () => {
@@ -415,5 +426,26 @@ describe('FillIngestionService', () => {
     // 不回退则 takeProfitPrice=0 → 网格价全负 → savings 爆算。
     const cfg = (svc as any).buildConfig({ boxTop: 2000, mainGridCount: 40, mainGridStep: 10, mainGridPortionSize: 0.05, stopLossGridCount: 9, stopLossGridStep: 10, direction: 'LONG' });
     expect(cfg.takeProfitPrice).toBe(2000);
+  });
+
+  it('新建 Fill 行时 ingest() 返回 true；重复摄入同一 (exchangeFillId, orderId) 返回 false', async () => {
+    // 用 mockResolvedValue（非 Once）使同一 order 在两次 ingest() 的所有 findFirst
+    // 调用中都稳定返回，第二次才能真正走到 resolveOrder → fill.findUnique 的去重分支，
+    // 而不是因 order 落空提前短路到「无主成交」分支（详见评审：dead mock config）。
+    prisma.order.findFirst.mockResolvedValue({ id: 'o1', runId: 'run1', side: 'BUY', qty: 1, filledQty: 0, gridIndex: 0, isEntry: false, orderType: 'GRID_BUY', preOrderPosition: 0, avgFillPrice: null });
+    const ev = { orderId: 'ex1', fillId: 'tRet', qty: 0.01, price: 2000, timestamp: 1, clientOrderId: 'c1', side: 'BUY' as const };
+
+    const first = await svc.ingest('RC1', ev);
+    expect(first).toBe(true);
+
+    prisma.fill.findUnique.mockResolvedValueOnce({ id: 'existing' });
+    const second = await svc.ingest('RC1', ev);
+    expect(second).toBe(false);
+  });
+
+  it('找不到 run 时 ingest() 返回 false', async () => {
+    prisma.run.findUnique.mockResolvedValueOnce(null);
+    const result = await svc.ingest('NOPE', { orderId: 'x', fillId: 'y', qty: 1, price: 1, timestamp: 1, clientOrderId: 'c', side: 'BUY' });
+    expect(result).toBe(false);
   });
 });

@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { TradingEngineService, ownsSessionAlgo, needsRunStateResetOnStart } from './trading-engine.service';
+import { NotFoundException, BadRequestException } from '@nestjs/common';
+import { TradingEngineService, ownsSessionAlgo, needsRunStateResetOnStart, buildOrderCreateData } from './trading-engine.service';
+import type { PlacedOrder } from './runner/grid-bot-runner';
 
 describe('ownsSessionAlgo', () => {
   it('匹配本 session 前缀的算法单', () => {
@@ -925,5 +927,230 @@ describe('TradingEngineService — Run.state 跟随 FSM 写回（domain-guide §
     const { svc, update } = makeSvc({ id: 'run-id', runCode: 'RC1', state: 'LIQUIDATED', endedAt: new Date() });
     await (svc as any).syncRunStateFromFsm('RC1', 'RUNNING');
     expect(update).not.toHaveBeenCalled();
+  });
+});
+
+describe('buildOrderCreateData', () => {
+  it('把 PlacedOrder.tif 映射进 Order 创建数据（route 数据落库）', () => {
+    const placed: PlacedOrder = {
+      runCode: 'RC1',
+      clientOrderId: 'c1',
+      exchangeOrderId: 'ex1',
+      side: 'BUY',
+      qty: 0.01,
+      price: 2100,
+      gridIndex: 3,
+      orderType: 'GRID_BUY',
+      isAlgo: false,
+      preOrderPosition: 0,
+      isEntry: false,
+      tif: 'POC',
+    };
+
+    const data = buildOrderCreateData(placed, 'run1');
+
+    expect(data).toMatchObject({ runId: 'run1', tif: 'POC', clientOrderId: 'c1' });
+  });
+
+  it('tif 缺省(平仓单)时写入 null，而不是 undefined 被 Prisma 忽略', () => {
+    const placed: PlacedOrder = {
+      runCode: 'RC1',
+      clientOrderId: '',
+      exchangeOrderId: 'ex2',
+      side: 'SELL',
+      qty: 0.01,
+      price: 2000,
+      gridIndex: -1,
+      orderType: 'CLOSE',
+      isAlgo: false,
+      preOrderPosition: 0.01,
+      isEntry: false,
+    };
+
+    const data = buildOrderCreateData(placed, 'run1');
+
+    expect(data.tif).toBeNull();
+  });
+});
+
+describe('TradingEngineService 触发式单单自愈（onOwnFillSettled）', () => {
+  function makeSvc() {
+    const prismaFillFindFirst = vi.fn();
+    const mockPrisma = { fill: { findFirst: prismaFillFindFirst } };
+    const reconcileRun = vi.fn().mockResolvedValue({ newFillsCount: 0 });
+    const svc = new TradingEngineService(
+      mockPrisma as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any,
+      { ingest: vi.fn().mockResolvedValue(true) } as any,
+      { reconcileRun } as any,
+      { createAndBroadcast: vi.fn().mockResolvedValue({}) } as any,
+    );
+    const adapter = { id: 'adapter-1' };
+    const runner = { symbol: 'ETH/USDT' };
+    (svc as any).runners.set('RC1', runner);
+    (svc as any).sessionAdapterMap.set('RC1', adapter);
+    return { svc, prismaFillFindFirst, reconcileRun, adapter };
+  }
+
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('宽限期后 Fill 表仍无对应行 → 立即调用 reconcileRun', async () => {
+    const { svc, prismaFillFindFirst, reconcileRun, adapter } = makeSvc();
+    prismaFillFindFirst.mockResolvedValue(null);
+
+    (svc as any).scheduleOwnFillCheck('RC1', 'client-1');
+    await vi.advanceTimersByTimeAsync(5000);
+
+    expect(reconcileRun).toHaveBeenCalledWith('RC1', 'ETH/USDT', adapter);
+  });
+
+  it('宽限期内多次触发只调用一次 reconcileRun（同一 runCode 去重）', async () => {
+    const { svc, prismaFillFindFirst, reconcileRun } = makeSvc();
+    prismaFillFindFirst.mockResolvedValue(null);
+
+    (svc as any).scheduleOwnFillCheck('RC1', 'client-1');
+    (svc as any).scheduleOwnFillCheck('RC1', 'client-2');
+    await vi.advanceTimersByTimeAsync(5000);
+
+    expect(reconcileRun).toHaveBeenCalledTimes(1);
+  });
+
+  it('宽限期到点前 Fill 表已经出现对应行 → 不调用 reconcileRun', async () => {
+    const { svc, prismaFillFindFirst, reconcileRun } = makeSvc();
+    prismaFillFindFirst.mockResolvedValue({ id: 'fill-1' });
+
+    (svc as any).scheduleOwnFillCheck('RC1', 'client-1');
+    await vi.advanceTimersByTimeAsync(5000);
+
+    expect(reconcileRun).not.toHaveBeenCalled();
+  });
+});
+
+describe('TradingEngineService 周期性持仓漂移检测（checkPositionDrift）', () => {
+  function makeSvc() {
+    const runFindUnique = vi.fn();
+    const mockPrisma = { run: { findUnique: runFindUnique } };
+    const createAndBroadcast = vi.fn().mockResolvedValue({});
+    const svc = new TradingEngineService(
+      mockPrisma as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any,
+      {} as any, {} as any,
+      { createAndBroadcast } as any,
+    );
+    return { svc, runFindUnique, createAndBroadcast };
+  }
+
+  it('单次漂移观测（可能是过期快照）→ 不发送告警', async () => {
+    const { svc, runFindUnique, createAndBroadcast } = makeSvc();
+    runFindUnique.mockResolvedValue({ pnlSignedPosition: 0.475, configSnapshot: { mainGridPortionSize: 0.05 } });
+    const runner = { getState: () => ({ position: { baseAssetQty: 0.55 } }) } as any;
+
+    await (svc as any).checkPositionDrift('RC1', runner);
+
+    expect(createAndBroadcast).not.toHaveBeenCalled();
+  });
+
+  it('连续两次 sweep 都观测到同一漂移 → 发送 POSITION_DRIFT_DETECTED 告警', async () => {
+    const { svc, runFindUnique, createAndBroadcast } = makeSvc();
+    runFindUnique.mockResolvedValue({ pnlSignedPosition: 0.475, configSnapshot: { mainGridPortionSize: 0.05 } });
+    const runner = { getState: () => ({ position: { baseAssetQty: 0.55 } }) } as any;
+
+    await (svc as any).checkPositionDrift('RC1', runner);
+    await (svc as any).checkPositionDrift('RC1', runner);
+
+    expect(createAndBroadcast).toHaveBeenCalledTimes(1);
+    expect(createAndBroadcast).toHaveBeenCalledWith(
+      expect.objectContaining({ code: 'POSITION_DRIFT_DETECTED', type: 'alert' }),
+    );
+  });
+
+  it('差值在阈值内 → 不发送告警', async () => {
+    const { svc, runFindUnique, createAndBroadcast } = makeSvc();
+    runFindUnique.mockResolvedValue({ pnlSignedPosition: 0.52, configSnapshot: { mainGridPortionSize: 0.05 } });
+    const runner = { getState: () => ({ position: { baseAssetQty: 0.55 } }) } as any;
+
+    await (svc as any).checkPositionDrift('RC1', runner);
+
+    expect(createAndBroadcast).not.toHaveBeenCalled();
+  });
+
+  it('同一漂移状态持续存在时不重复告警；差值恢复到阈值内后再次漂移（连续两次）会重新告警', async () => {
+    const { svc, runFindUnique, createAndBroadcast } = makeSvc();
+    const runner = { getState: () => ({ position: { baseAssetQty: 0.55 } }) } as any;
+
+    runFindUnique.mockResolvedValue({ pnlSignedPosition: 0.475, configSnapshot: { mainGridPortionSize: 0.05 } });
+    await (svc as any).checkPositionDrift('RC1', runner); // 第1次：仅计数，不告警
+    await (svc as any).checkPositionDrift('RC1', runner); // 第2次：达到连续阈值，告警
+    await (svc as any).checkPositionDrift('RC1', runner); // 第3次：同一episode内不重复告警
+    expect(createAndBroadcast).toHaveBeenCalledTimes(1);
+
+    runFindUnique.mockResolvedValue({ pnlSignedPosition: 0.55, configSnapshot: { mainGridPortionSize: 0.05 } });
+    await (svc as any).checkPositionDrift('RC1', runner); // 恢复：重置计数与告警标记
+
+    runFindUnique.mockResolvedValue({ pnlSignedPosition: 0.475, configSnapshot: { mainGridPortionSize: 0.05 } });
+    await (svc as any).checkPositionDrift('RC1', runner); // 重新漂移第1次：不告警
+    expect(createAndBroadcast).toHaveBeenCalledTimes(1);
+    await (svc as any).checkPositionDrift('RC1', runner); // 重新漂移第2次：再次告警
+    expect(createAndBroadcast).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('TradingEngineService.reconcileRobot', () => {
+  function makeSvc() {
+    const robotFindUnique = vi.fn();
+    const runFindFirst = vi.fn();
+    const runFindUnique = vi.fn();
+    const mockPrisma = {
+      robot: { findUnique: robotFindUnique },
+      run: { findFirst: runFindFirst, findUnique: runFindUnique },
+    };
+    const reconcileRun = vi.fn();
+    const svc = new TradingEngineService(
+      mockPrisma as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any,
+      {} as any,
+      { reconcileRun } as any,
+      { createAndBroadcast: vi.fn().mockResolvedValue({}) } as any,
+    );
+    return { svc, robotFindUnique, runFindFirst, runFindUnique, reconcileRun };
+  }
+
+  it('机器人不存在 → 抛 NotFoundException', async () => {
+    const { svc, robotFindUnique } = makeSvc();
+    robotFindUnique.mockResolvedValue(null);
+    await expect(svc.reconcileRobot('nope')).rejects.toThrow(NotFoundException);
+  });
+
+  it('机器人没有活跃箱体 → 抛 BadRequestException', async () => {
+    const { svc, robotFindUnique } = makeSvc();
+    robotFindUnique.mockResolvedValue({ id: 'r1', symbol: 'ETH/USDT', activeBoxId: null });
+    await expect(svc.reconcileRobot('r1')).rejects.toThrow(BadRequestException);
+  });
+
+  it('没有未结束的 Run → 抛 BadRequestException', async () => {
+    const { svc, robotFindUnique, runFindFirst } = makeSvc();
+    robotFindUnique.mockResolvedValue({ id: 'r1', symbol: 'ETH/USDT', activeBoxId: 'b1' });
+    runFindFirst.mockResolvedValue(null);
+    await expect(svc.reconcileRobot('r1')).rejects.toThrow(BadRequestException);
+  });
+
+  it('runner 不在内存中运行（sessionAdapterMap 没有对应 adapter）→ 抛 BadRequestException', async () => {
+    const { svc, robotFindUnique, runFindFirst } = makeSvc();
+    robotFindUnique.mockResolvedValue({ id: 'r1', symbol: 'ETH/USDT', activeBoxId: 'b1' });
+    runFindFirst.mockResolvedValue({ id: 'run1', runCode: 'RC1' });
+    await expect(svc.reconcileRobot('r1')).rejects.toThrow(BadRequestException);
+  });
+
+  it('reconcile 成功后返回新增成交数与双侧持仓对比', async () => {
+    const { svc, robotFindUnique, runFindFirst, runFindUnique, reconcileRun } = makeSvc();
+    robotFindUnique.mockResolvedValue({ id: 'r1', symbol: 'ETH/USDT', activeBoxId: 'b1' });
+    runFindFirst.mockResolvedValue({ id: 'run1', runCode: 'RC1' });
+    runFindUnique.mockResolvedValue({ id: 'run1', runCode: 'RC1', pnlSignedPosition: 0.55, configSnapshot: { mainGridPortionSize: 0.05 } });
+    reconcileRun.mockResolvedValue({ newFillsCount: 1 });
+    const adapter = { getPosition: vi.fn().mockResolvedValue({ baseAssetQty: 0.55 }) };
+    (svc as any).sessionAdapterMap.set('RC1', adapter);
+
+    const result = await svc.reconcileRobot('r1');
+
+    expect(reconcileRun).toHaveBeenCalledWith('RC1', 'ETH/USDT', adapter);
+    expect(result).toEqual({ newFillsCount: 1, dbPosition: 0.55, exchangePosition: 0.55, positionMatches: true });
   });
 });

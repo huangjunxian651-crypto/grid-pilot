@@ -4,7 +4,7 @@ import { useLang } from "@/lib/i18n-context";
 import { classifySymbol, RECOMMENDED_SYMBOLS, SYMBOL_TOKEN_LIMIT_BY_EXCHANGE } from "@gridpilot/shared-types";
 
 const chip = (active: boolean): React.CSSProperties => ({
-  padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontSize: 13,
+  padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontSize: 13, whiteSpace: "nowrap",
   border: `1px solid ${active ? "var(--accent)" : "var(--border-subtle)"}`,
   background: active ? "var(--accent-tint)" : "var(--bg-2)",
   color: active ? "var(--accent)" : "var(--fg-1)",
@@ -42,7 +42,7 @@ export function SymbolPicker({ value, exchangeId, onChange, onBlockedChange }: {
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <div>
         <div style={{ fontSize: 11, color: "var(--fg-3)", marginBottom: 4 }}>{t("symbol.tier_best_label")}</div>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {best.map((r) => (
             <button key={r.symbol} type="button" data-testid={`symbol-chip-${r.symbol}`} style={chip(!customMode && value === r.symbol)} onClick={() => pickRecommended(r.symbol)}>
               {r.symbol} · {t("symbol.recommended_badge")}
@@ -52,7 +52,7 @@ export function SymbolPicker({ value, exchangeId, onChange, onBlockedChange }: {
       </div>
       <div>
         <div style={{ fontSize: 11, color: "var(--fg-3)", marginBottom: 4 }}>{t("symbol.tier_major_label")}</div>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {major.map((r) => (
             <button key={r.symbol} type="button" data-testid={`symbol-chip-${r.symbol}`} style={chip(!customMode && value === r.symbol)} onClick={() => pickRecommended(r.symbol)}>
               {r.symbol}

@@ -269,7 +269,7 @@ stopLossGridCount × stopLossGridStep ≤ boxDepth / 5
   如果 当前价格已朝止盈方向反弹 ≥ TriggerPrice：
     → 确认反弹！进入 RUNNING 状态，开始正式网格交易
 
-  如果 d(当前价格) > mainGridDepth 且 StopLossGridCount > 0（越过满仓线 fullPositionPrice）：
+  如果 d(当前价格) > boxDepth 且 StopLossGridCount > 0（越过清算线 liquidationPrice）：
     → 直接进入 LIQUIDATING 状态（即使仓位为零，也走止损流程）
 ```
 <!-- 2026-05-28 align-with-go: §5.1 此退出路径已在 Go FSM 实现中确认；TS trading-engine 的 fsm/ 模块须实现相同分支，否则追踪模式无法正常退出。 -->
@@ -688,9 +688,9 @@ if (actualHeld >= targetHoldSize + ε) {
 ```
 TRAILING_ENTRY ──[价格朝止盈方向反弹 ≥ TrailingCallbackRate 且 d(price) ≥ activationDepth]──► RUNNING
 TRAILING_ENTRY ──[d(price) < activationDepth（越过激活价、更靠止盈端）]──────────────────────► CANCELLED（退出，回到 BotManager 监听）
-TRAILING_ENTRY ──[d(price) > mainGridDepth（越过满仓线）且 stopLossGridCount > 0]────────────► LIQUIDATING
+TRAILING_ENTRY ──[d(price) > boxDepth（越过清算线）且 stopLossGridCount > 0]────────────────► LIQUIDATING
 
-RUNNING ──[d(price) > mainGridDepth（越过满仓线 fullPositionPrice）且 stopLossGridCount > 0]──► LIQUIDATING
+RUNNING ──[d(price) > boxDepth（越过清算线 liquidationPrice）且 stopLossGridCount > 0]───────► LIQUIDATING
 RUNNING ──[d(price) ≤ 0（到达止盈线 takeProfitPrice）且持仓为零]──────────────────────────────► TAKE_PROFIT
 
 LIQUIDATING ──[持仓 = 0]────────────────────────────────────────────────► LIQUIDATED
@@ -702,7 +702,9 @@ RUNNING / TRAILING_ENTRY ──[USER_PAUSE 或 PERMANENT_ERROR]──► PAUSED
 PAUSED ──[USER_RESUME]──► RUNNING（runner 保活，仅复位 Run.state；按持仓恢复到对应交易态）
 ```
 
-> **LIQUIDATING 触发线说明**：清算（整体平仓）在价格**越过满仓线 `fullPositionPrice`**（`d > mainGridDepth`，且配置了止损区）时即触发，而非到达清算线 `liquidationPrice` 才触发。止损区内的递减目标仓位仅作为清算执行期间的兜底减仓路径；兜底条件单（§8.3）仍挂在清算线作为最后防线。旧文档"价格 < BoxLowPrice 触发清算"的描述与代码不符，已按现行为修订（见 2026-06-10-short-box-geometry-design.md §三）。
+> **LIQUIDATING 触发线说明**：清算（整体平仓）在价格**越过清算线 `liquidationPrice`**（`d > boxDepth`，且配置了止损区）时才触发，与 §8 "统一止损机制"一致——止损区内（`fullPositionPrice` ~ `liquidationPrice`）由 §8.2 的统一仓位计算逐格生成 SELL 订单减仓，只有在动态减仓仍未能清空、价格已经越过清算线时，才由 FSM 强制整体平仓（兜底条件单，§8.3，同样挂在清算线）。
+>
+> **勘误（2026-07-26）**：2026-05-31 一次"字段改名"重构（`e200380`，把 `boxLow`/`boxHigh` 改名为 `mainGridTop`/`mainGridBottom`）误把触发阈值从 `boxDepth`（清算线）替换成了 `mainGridDepth`（满仓线，止损区的起点而非终点），导致价格一进入隔离区/止损区就立即整体清仓，止损区的逐格减仓逻辑在运行时从未被真正执行到。2026-06-10 的 d 空间重构发现了这个"文档与代码不符"，但错误地把文档改成了迁就代码（即本节之前的版本），而非查明代码本身是回归。现已定位并修复代码（`bot-fsm.ts` / `bot-state-reconstructor.ts`），本节描述的是修复后、也是最初设计的行为。`2026-06-10-short-box-geometry-design.md` §4.2 同步修正。
 
 ### 9.3 各状态的行为
 
@@ -714,7 +716,7 @@ PAUSED ──[USER_RESUME]──► RUNNING（runner 保活，仅复位 Run.stat
 **RUNNING 状态**：
 - 每次价格更新：调用目标仓位算法，生成网格买卖指令
 - 定期检查算法单哨兵，补缺缺失的止损条件单（频率要求见 8.5 节）
-- 监测清算触发条件（价格越过满仓线 fullPositionPrice，`d > mainGridDepth` 且 stopLossGridCount > 0）
+- 监测清算触发条件（价格越过清算线 liquidationPrice，`d > boxDepth` 且 stopLossGridCount > 0）
 
 **LIQUIDATING 状态**：
 - 每次价格更新：若持仓 > 0，立即以市价全平（CancelAll + MarketClose）

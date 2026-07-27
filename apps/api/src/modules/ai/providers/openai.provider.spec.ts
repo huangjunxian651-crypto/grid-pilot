@@ -41,4 +41,35 @@ describe("OpenAiProvider", () => {
     const out = await new OpenAiProvider(settings({ apiKey: "sk", model: "m", baseUrl: null })).completeJson<{ recommendations: unknown[] }>("s", "u", { type: "object" });
     expect(out.recommendations).toHaveLength(1);
   });
+
+  it("调用失败时报错要带上实际 model/baseUrl，不能一律说成 OpenAI（配置的可能是 DeepSeek 等兼容端点）", async () => {
+    createMock.mockRejectedValue(new Error("402 Insufficient Balance"));
+    await expect(
+      new OpenAiProvider(settings({ apiKey: "sk", model: "deepseek-v4-pro", baseUrl: "https://api.deepseek.com" })).completeJson("s", "u", { type: "object" })
+    ).rejects.toMatchObject({
+      response: {
+        code: "AI_LLM_FAILED",
+        message: expect.stringMatching(/deepseek-v4-pro/),
+      },
+    });
+    createMock.mockRejectedValue(new Error("402 Insufficient Balance"));
+    await expect(
+      new OpenAiProvider(settings({ apiKey: "sk", model: "deepseek-v4-pro", baseUrl: "https://api.deepseek.com" })).completeJson("s", "u", { type: "object" })
+    ).rejects.toMatchObject({
+      response: {
+        message: expect.stringMatching(/https:\/\/api\.deepseek\.com/),
+      },
+    });
+  });
+
+  it("没配 baseUrl 时（走默认官方 OpenAI 端点）报错要能看出是官方 OpenAI，而不是留空", async () => {
+    createMock.mockRejectedValue(new Error("insufficient_quota"));
+    await expect(
+      new OpenAiProvider(settings({ apiKey: "sk", model: "gpt-4o", baseUrl: null })).completeJson("s", "u", { type: "object" })
+    ).rejects.toMatchObject({
+      response: {
+        message: expect.stringMatching(/api\.openai\.com/),
+      },
+    });
+  });
 });

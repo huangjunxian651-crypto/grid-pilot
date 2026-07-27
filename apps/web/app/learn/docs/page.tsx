@@ -67,7 +67,7 @@ export default function DocsPage() {
         <p style={{ fontSize: 13, color: "var(--fg-2)", lineHeight: 1.6, marginTop: 4, marginBottom: 0 }}>{t("docs.subtitle")}</p>
       </div>
 
-      <div className="gp-grid-doc" style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 300px", gap: 18, alignItems: "start" }}>
+      <div className="gp-grid-doc">
         {/* 主文档 */}
         <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
           {/* 生命周期 */}

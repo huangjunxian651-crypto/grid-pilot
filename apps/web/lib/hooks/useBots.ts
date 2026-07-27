@@ -13,6 +13,7 @@ import {
   type HistoryRange,
   type EquityHistoryResponse,
   type SavingsHistoryResponse,
+  type EventsQueryParams,
 } from "@/lib/api";
 
 /** STOPPING 期间收紧轮询到 1.5s，让停止阶段进度更跟手；其余 5s。 */
@@ -43,7 +44,7 @@ export function useSavingsHistory(range: HistoryRange) {
   });
 }
 
-export function useEvents(params?: { type?: string; limit?: number; offset?: number }) {
+export function useEvents(params?: EventsQueryParams) {
   return useQuery<EventListResponse>({
     queryKey: ["events", params],
     queryFn: () => eventsApi.list(params),
@@ -111,6 +112,25 @@ export function useStopRobot() {
     onSuccess: (_result, { id }) => {
       queryClient.invalidateQueries({ queryKey: ["robots"] });
       queryClient.invalidateQueries({ queryKey: ["robot", id] });
+    },
+  });
+}
+
+export function useReconcileRobot() {
+  const queryClient = useQueryClient();
+  return useMutation<
+    { success: boolean; robotId: string; newFillsCount: number; dbPosition: number; exchangePosition: number; positionMatches: boolean },
+    Error,
+    string
+  >({
+    mutationFn: (id) => robotApi.reconcile(id),
+    onSuccess: (_result, id) => {
+      queryClient.invalidateQueries({ queryKey: ["robots"] });
+      queryClient.invalidateQueries({ queryKey: ["robot", id] });
+      // 手动对账可能补齐新成交，同步刷新该机器人的成交列表（简单版 + 分页版），
+      // 否则 toast 报「N 条新成交」但页面上的列表纹丝不动。
+      queryClient.invalidateQueries({ queryKey: ["robot-fills", id] });
+      queryClient.invalidateQueries({ queryKey: ["robot-fills-paged", id] });
     },
   });
 }

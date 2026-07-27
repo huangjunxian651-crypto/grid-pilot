@@ -1,7 +1,14 @@
 # GridPilot
 
 > ETH/USDT perpetual futures **dynamic grid** trading platform · compatible with Binance / Gate.io / OKX
-> Makes real-time decisions like a trader watching the charts, instead of placing orders and walking away.
+
+**Upgrades the exchange's "place it and forget it" static grid into a trader watching the charts 24/7 — re-deciding on every tick.**
+
+- 🧠 **Dynamic chart-watching orders**: no more placing a static batch of orders and hoping — it re-evaluates on every market update before placing, amending, or canceling orders, and captures extra spread beyond the grid step when the price jumps sharply
+- 💸 **Saves ~0.03% in fees per trade**: Post-Only Maker orders by default to capture lower rates; takes only when the excess profit outweighs the taker cost; rejects orders outright at unfavorable prices
+- 🎯 **Trailing entry — never open at the top**: when the price enters the range it first trails the low, and builds the position only after confirming a rebound, avoiding getting stuck right at entry
+- 🛡️ **Layered stop-loss buffer**: when the price briefly breaks down and then rebounds, the residual position benefits directly — no fees wasted on a full exit and rebuild
+- 🧭 **Multi-range auto-following**: pre-configure multiple non-overlapping ranges; whichever range the price enters becomes active
 
 [简体中文](README.md) · [繁體中文](README.zh-TW.md) · **English** · [日本語](README.ja.md) · [Español](README.es.md) · [العربية](README.ar.md) · [Français](README.fr.md) · [Português](README.pt.md) · [Italiano](README.it.md) · [한국어](README.ko.md) · [ไทย](README.th.md) · [Tiếng Việt](README.vi.md)
 
@@ -78,7 +85,7 @@ Going further: **when you register with an exchange, filling in a rebate code le
 ### Option 1: One-Command Full Stack via Docker (recommended for self-hosting)
 
 ```bash
-git clone <repo-url> && cd grid-pilot
+git clone https://github.com/QuantiaAI/grid-pilot.git && cd grid-pilot
 cp .env.example .env
 # Generate an encryption key and fill it into ENCRYPTION_KEY in .env
 openssl rand -base64 32
@@ -93,11 +100,16 @@ After startup, visit http://localhost:3300 .
 ### Option 2: Local Installation (recommended for development)
 
 ```bash
-git clone <repo-url> && cd grid-pilot
+git clone https://github.com/QuantiaAI/grid-pilot.git && cd grid-pilot
 pnpm install
-cp .env.example .env        # adjust ports/keys as needed
-pnpm dev                    # starts the docker infrastructure first, then API + Web
+cp .env.example .env        # adjust ports as needed; set ENCRYPTION_KEY to the output of openssl rand -base64 32
+pnpm --filter @gridpilot/api exec prisma generate       # generate the Prisma Client (postinstall is disabled — this step is required)
+pnpm dev:infra              # bring up PostgreSQL + Redis
+pnpm exec dotenv -e .env -- pnpm --filter @gridpilot/api exec prisma migrate deploy # first install only: apply database migrations
+pnpm dev:skip-infra         # start API + Web
 ```
+
+> The `prisma generate` / `migrate deploy` steps are only needed once on first install; afterwards just run `pnpm dev` to start everything.
 
 | Service | Address | Config |
 |------|------|--------|

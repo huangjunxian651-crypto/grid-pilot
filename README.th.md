@@ -1,7 +1,14 @@
 # GridPilot
 
 > แพลตฟอร์มเทรด **กริดแบบไดนามิก** สำหรับสัญญาฟิวเจอร์สถาวร ETH/USDT · รองรับ Binance / Gate.io / OKX
-> ตัดสินใจแบบเรียลไทม์เหมือนเทรดเดอร์ที่จับตาตลาดอยู่ตลอด ไม่ใช่แค่วางคำสั่งทิ้งไว้แล้วไม่สนใจ
+
+**อัปเกรดกริดสแตติกแบบ "วางแล้วไม่สนใจ" ของเอ็กซ์เชนจ์ ให้กลายเป็นเทรดเดอร์ที่จับตากราฟตลอด 24 ชั่วโมงทุกวัน — ตัดสินใจใหม่ทุกครั้งที่ราคาขยับ**
+
+- 🧠 **วางคำสั่งแบบจับตาตลาดไดนามิก**: ไม่วางคำสั่งสแตติกเป็นชุดแล้วปล่อยให้โชคชะตา — ทุกครั้งที่ข้อมูลตลาดอัปเดตจะประเมินใหม่ก่อนแล้วจึงวาง/แก้/ยกเลิกคำสั่ง และเมื่อราคากระโดดแรงยังจับส่วนต่างราคาเพิ่มเติมที่เกินจากสเต็ปกริดได้ด้วย
+- 💸 **ประหยัดค่าธรรมเนียม ~0.03% ต่อการเทรด**: ค่าเริ่มต้นวางคำสั่ง Post-Only Maker เพื่อกินค่าธรรมเนียมที่ต่ำกว่า จะกินคำสั่งก็ต่อเมื่อกำไรส่วนเกินครอบคลุมต้นทุนการกินคำสั่งเท่านั้น เมื่อราคาไม่เอื้อก็ปฏิเสธคำสั่งโดยตรง
+- 🎯 **ติดตามเปิดสถานะ — ไม่เปิดที่จุดสูง**: เมื่อราคาเข้าช่วงจะไล่ตามจุดต่ำก่อน ยืนยันการเด้งกลับแล้วจึงเปิดสถานะ เลี่ยงการเพิ่งเข้าก็ติดดอย
+- 🛡️ **บัฟเฟอร์ตัดขาดทุนแบบหลายชั้น**: เมื่อราคาหลุดลงชั่วครู่แล้วเด้งกลับ สถานะที่เหลือได้ประโยชน์ทันที ไม่ต้องเสียค่าธรรมเนียมปิดทั้งหมดแล้วสร้างใหม่
+- 🧭 **ติดตามหลายช่วงราคาอัตโนมัติ**: ตั้งค่าหลายช่วงที่ไม่ทับซ้อนกันล่วงหน้า ราคาเข้าช่วงไหน กลยุทธ์ก็เปิดใช้งานช่วงนั้น
 
 [简体中文](README.md) · [繁體中文](README.zh-TW.md) · [English](README.en.md) · [日本語](README.ja.md) · [Español](README.es.md) · [العربية](README.ar.md) · [Français](README.fr.md) · [Português](README.pt.md) · [Italiano](README.it.md) · [한국어](README.ko.md) · **ไทย** · [Tiếng Việt](README.vi.md)
 
@@ -78,11 +85,11 @@
 ### วิธีที่หนึ่ง: Docker ขึ้นทั้งสแตกในคำสั่งเดียว (แนะนำสำหรับการดีพลอยเอง)
 
 ```bash
-git clone <repo-url> && cd grid-pilot
+git clone https://github.com/QuantiaAI/grid-pilot.git && cd grid-pilot
 cp .env.example .env
-# 生成加密密钥并填入 .env 的 ENCRYPTION_KEY
+# สร้างคีย์เข้ารหัสแล้วใส่ใน ENCRYPTION_KEY ของ .env
 openssl rand -base64 32
-# 一键起 PostgreSQL + Redis + API + Web（自动执行数据库迁移）
+# รัน PostgreSQL + Redis + API + Web ด้วยคำสั่งเดียว (รันมิเกรชันฐานข้อมูลอัตโนมัติ)
 docker compose --profile full up --build -d
 ```
 
@@ -93,11 +100,16 @@ docker compose --profile full up --build -d
 ### วิธีที่สอง: ติดตั้งบนเครื่อง (แนะนำสำหรับการพัฒนา)
 
 ```bash
-git clone <repo-url> && cd grid-pilot
+git clone https://github.com/QuantiaAI/grid-pilot.git && cd grid-pilot
 pnpm install
-cp .env.example .env        # 按需调整端口/密钥
-pnpm dev                    # 先起 docker 基础设施，再起 API + Web
+cp .env.example .env        # ปรับพอร์ตตามต้องการ; ตั้งค่า ENCRYPTION_KEY เป็นผลลัพธ์ของ openssl rand -base64 32
+pnpm --filter @gridpilot/api exec prisma generate       # สร้าง Prisma Client (postinstall ถูกปิดไว้ — ขั้นตอนนี้จำเป็น)
+pnpm dev:infra              # เริ่ม PostgreSQL + Redis
+pnpm exec dotenv -e .env -- pnpm --filter @gridpilot/api exec prisma migrate deploy # เฉพาะการติดตั้งครั้งแรก: รันการย้ายฐานข้อมูล
+pnpm dev:skip-infra         # เริ่ม API + Web
 ```
+
+> ขั้นตอน `prisma generate` / `migrate deploy` จำเป็นเฉพาะการติดตั้งครั้งแรกเท่านั้น หลังจากนั้นเพียงรัน `pnpm dev` เพื่อเริ่มทุกอย่าง
 
 | บริการ | ที่อยู่ | รายการตั้งค่า |
 |------|------|--------|
@@ -109,10 +121,10 @@ pnpm dev                    # 先起 docker 基础设施，再起 API + Web
 เริ่มทีละตัว:
 
 ```bash
-pnpm dev:infra        # 仅 PostgreSQL + Redis
-pnpm dev:api          # 仅后端
-pnpm dev:web          # 仅前端
-pnpm dev:skip-infra   # API + Web，跳过 docker
+pnpm dev:infra        # เฉพาะ PostgreSQL + Redis
+pnpm dev:api          # เฉพาะแบ็กเอนด์
+pnpm dev:web          # เฉพาะฟรอนต์เอนด์
+pnpm dev:skip-infra   # API + Web โดยข้าม docker
 ```
 
 ## 🕹️ วิธีใช้งาน
@@ -155,11 +167,11 @@ pnpm dev:skip-infra   # API + Web，跳过 docker
 | ส่วนแบ่งร่วม | TypeScript · pnpm Workspaces · Turborepo |
 
 ```
-apps/web/          # Next.js 前端（暗色主题，12 语）
-apps/api/          # NestJS 后端
-packages/shared-types/  # 前后端共享类型
-docs/              # STRATEGY_SPEC.md（策略规格）· ARCHITECTURE.md（组件映射）
-docker-compose.yml # 默认基础设施；--profile full 全栈
+apps/web/          # ฟรอนต์เอนด์ Next.js (ธีมมืด 12 ภาษา)
+apps/api/          # แบ็กเอนด์ NestJS
+packages/shared-types/  # ไทป์ที่ใช้ร่วมกันระหว่างฟรอนต์เอนด์และแบ็กเอนด์
+docs/              # STRATEGY_SPEC.md (สเปกกลยุทธ์) · ARCHITECTURE.md (การแมปคอมโพเนนต์)
+docker-compose.yml # โครงสร้างพื้นฐานเริ่มต้น; --profile full สำหรับทั้งสแตก
 ```
 
 **สเตทแมชชีนของกลยุทธ์**: `TRAILING_ENTRY → RUNNING → LIQUIDATING → LIQUIDATED`, `RUNNING` สามารถแตกแขนงไปยัง `TAKE_PROFIT` ได้ แขนงด้านปฏิบัติการมี `PAUSED` (สามารถ `USER_RESUME` เพื่อรีเซ็ตกลับ), `CANCELLED`, `HOLD`
@@ -167,9 +179,9 @@ docker-compose.yml # 默认基础设施；--profile full 全栈
 **คำสั่งสำหรับการพัฒนา**:
 
 ```bash
-pnpm dev          # 一键起所有服务
-pnpm build        # 构建
-pnpm test         # 测试
+pnpm dev          # เริ่มทุกบริการในคำสั่งเดียว
+pnpm build        # สร้าง (build)
+pnpm test         # ทดสอบ
 pnpm lint         # Lint
 ```
 
@@ -177,8 +189,8 @@ pnpm lint         # Lint
 
 ```bash
 cd apps/api
-pnpm prisma migrate dev    # 执行迁移
-pnpm prisma studio         # 查看数据
+pnpm prisma migrate dev    # รันมิเกรชัน
+pnpm prisma studio         # ดูข้อมูล
 ```
 
 ## ดัชนีเอกสาร

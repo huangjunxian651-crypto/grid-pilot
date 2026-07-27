@@ -1,7 +1,14 @@
 # GridPilot
 
 > Piattaforma di trading a **griglia dinamica** per contratti perpetui ETH/USDT · compatibile con Binance / Gate.io / OKX
-> Decisioni in tempo reale come un trader che monitora il mercato, anziché piazzare gli ordini e lasciarli lì.
+
+**Trasforma la griglia statica degli exchange, quella da "piazza e dimentica", in un trader che monitora i grafici 24 ore su 24, 7 giorni su 7 — e che ridecide a ogni movimento di mercato.**
+
+- 🧠 **Ordini con monitoraggio dinamico**: niente più piazzamenti statici di massa affidati alla fortuna — a ogni aggiornamento di mercato rivaluta prima di piazzare, modificare o annullare gli ordini, e cattura uno spread aggiuntivo oltre il passo della griglia quando il prezzo compie salti ampi
+- 💸 **Risparmia ~0,03% di commissioni a operazione**: di default piazza ordini Post-Only Maker per ottenere commissioni più basse; esegue attivamente solo quando il profitto aggiuntivo supera il costo dell'esecuzione attiva; rifiuta direttamente gli ordini a prezzi sfavorevoli
+- 🎯 **Apertura con trailing — mai aprire sul massimo**: quando il prezzo entra nell'intervallo insegue prima il minimo e costruisce la posizione solo dopo aver confermato il rimbalzo, evitando di restare incastrati subito dopo l'apertura
+- 🛡️ **Stop loss a livelli con effetto tampone**: quando il prezzo rompe brevemente al ribasso e poi rimbalza, la posizione residua ne beneficia direttamente — niente commissioni sprecate in una chiusura totale seguita da una ricostruzione
+- 🧭 **Segui automaticamente più intervalli**: preconfigura più intervalli non sovrapposti; si attiva quello in cui entra il prezzo
 
 [简体中文](README.md) · [繁體中文](README.zh-TW.md) · [English](README.en.md) · [日本語](README.ja.md) · [Español](README.es.md) · [العربية](README.ar.md) · [Français](README.fr.md) · [Português](README.pt.md) · **Italiano** · [한국어](README.ko.md) · [ไทย](README.th.md) · [Tiếng Việt](README.vi.md)
 
@@ -78,7 +85,7 @@ C'è di più: **inserendo un codice di rimborso alla registrazione sull'exchange
 ### Metodo 1: stack completo Docker in un comando (consigliato per il self-hosting)
 
 ```bash
-git clone <repo-url> && cd grid-pilot
+git clone https://github.com/QuantiaAI/grid-pilot.git && cd grid-pilot
 cp .env.example .env
 # Genera la chiave di crittografia e inseriscila in ENCRYPTION_KEY nel file .env
 openssl rand -base64 32
@@ -93,11 +100,16 @@ Dopo l'avvio, visita http://localhost:3300 .
 ### Metodo 2: installazione locale (consigliato per lo sviluppo)
 
 ```bash
-git clone <repo-url> && cd grid-pilot
+git clone https://github.com/QuantiaAI/grid-pilot.git && cd grid-pilot
 pnpm install
-cp .env.example .env        # Regola porte/chiavi secondo necessità
-pnpm dev                    # Avvia prima l'infrastruttura docker, poi API + Web
+cp .env.example .env        # regola le porte se necessario; imposta ENCRYPTION_KEY con l'output di openssl rand -base64 32
+pnpm --filter @gridpilot/api exec prisma generate       # genera il Prisma Client (il postinstall è disabilitato — questo passaggio è obbligatorio)
+pnpm dev:infra              # avvia PostgreSQL + Redis
+pnpm exec dotenv -e .env -- pnpm --filter @gridpilot/api exec prisma migrate deploy # solo alla prima installazione: applica le migrazioni del database
+pnpm dev:skip-infra         # avvia API + Web
 ```
+
+> I passaggi `prisma generate` / `migrate deploy` sono necessari solo alla prima installazione; in seguito basta eseguire `pnpm dev` per avviare tutto.
 
 | Servizio | Indirizzo | Opzione di configurazione |
 |------|------|--------|

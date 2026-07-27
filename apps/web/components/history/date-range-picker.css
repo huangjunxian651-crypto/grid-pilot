@@ -1,0 +1,9 @@
+.rdp {
+  --rdp-accent-color: var(--accent);
+  --rdp-background-color: var(--accent-tint);
+  margin: 0;
+}
+.rdp-day_selected, .rdp-day_selected:hover {
+  background-color: var(--accent);
+  color: var(--btn-fg);
+}

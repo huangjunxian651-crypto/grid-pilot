@@ -30,9 +30,9 @@ export default function ArchivedRobotsPage() {
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 12 }}>
           {list.map((r) => (
-            <div key={r.id} data-testid="archived-robot-card" style={{ display: "flex", alignItems: "center", gap: 14, padding: 16, background: "var(--bg-1)", border: "1px solid var(--border-subtle)", borderRadius: 10 }}>
+            <div key={r.id} data-testid="archived-robot-card" className="robot-card" style={{ display: "flex", alignItems: "center", gap: 14, padding: 16, background: "var(--bg-1)", border: "1px solid var(--border-subtle)", borderRadius: 10 }}>
               <ExchangeMark exchange={(r.exchangeId === "binance" || r.exchangeId === "gateio" || r.exchangeId === "okx") ? r.exchangeId : "gateio"} size={32} />
-              <Link href={`/robots/${r.id}`} style={{ flex: 1 }}>
+              <Link href={`/robots/${r.id}`} className="robot-card-main" style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 15, fontWeight: 500 }}>
                   {r.symbol}
                   <span style={{ fontSize: 11, color: "var(--fg-3)", marginLeft: 8, fontWeight: 400 }}>{fmt.exchangeName(r.exchangeId)} · {r.accountLabel}</span>
@@ -45,10 +45,12 @@ export default function ArchivedRobotsPage() {
                   <span> · {t("robot.manage_boxes", { n: r.boxCount })}</span>
                 </div>
               </Link>
-              <div style={{ marginRight: 8 }}>
-                <PnlCell realizedPnl={r.realizedPnl} totalFees={r.totalFees} netPnl={r.netPnl} totalPnl={r.totalPnl} lastUnrealizedPnl={r.lastUnrealizedPnl} />
+              <div className="robot-card-aside">
+                <div style={{ marginRight: 8 }}>
+                  <PnlCell realizedPnl={r.realizedPnl} totalFees={r.totalFees} netPnl={r.netPnl} totalPnl={r.totalPnl} lastUnrealizedPnl={r.lastUnrealizedPnl} />
+                </div>
+                <CopyRobotButton robotId={r.id} />
               </div>
-              <CopyRobotButton robotId={r.id} />
             </div>
           ))}
         </div>

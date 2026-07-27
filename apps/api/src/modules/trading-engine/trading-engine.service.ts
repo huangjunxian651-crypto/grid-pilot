@@ -4,7 +4,7 @@ import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ExchangeAdapterFactory } from '../exchange/exchange-adapter.factory';
 import { CredentialService } from '../credential/credential.service';
-import { GridBotRunner, type BotConfig, type RunnerCriticalEvent } from './runner/grid-bot-runner';
+import { GridBotRunner, type BotConfig, type PlacedOrder, type RunnerCriticalEvent } from './runner/grid-bot-runner';
 import { NotificationService } from '../notification/notification.service';
 import { BotFsm } from './fsm/bot-fsm';
 import { StrategyEngine } from './strategy/strategy-engine';
@@ -20,6 +20,7 @@ import type { AccountSnapshot, PositionInfo } from './account/account-snapshot.s
 import { RunBalanceSnapshotService } from './account/run-balance-snapshot.service';
 import { FillIngestionService } from './fills/fill-ingestion.service';
 import { FillReconcileService } from './fills/fill-reconcile.service';
+import { detectPositionDrift } from './fills/detect-position-drift';
 import type { TradingEngineGateway } from './trading-engine.gateway';
 import type { BotState, ActiveOrder } from './types/bot-state.types';
 import type { AlgoOrder } from './types/exchange.types';
@@ -100,6 +101,25 @@ export function needsRunStateResetOnStart(run: { endedAt: Date | null; state: st
   return run.endedAt != null || run.state === 'PAUSED';
 }
 
+/** onOrderPlaced 回调 → Order 建库数据的纯映射，独立导出以便黑盒测试 tif 落库不遗漏。 */
+export function buildOrderCreateData(o: PlacedOrder, runId: string) {
+  return {
+    runId,
+    clientOrderId: o.clientOrderId || null,
+    exchangeOrderId: o.exchangeOrderId,
+    orderType: o.orderType,
+    side: o.side,
+    qty: o.qty,
+    price: o.price,
+    gridIndex: o.gridIndex >= 0 ? o.gridIndex : null,
+    isAlgo: o.isAlgo,
+    preOrderPosition: o.preOrderPosition,
+    isEntry: o.isEntry,
+    tif: o.tif ?? null,
+    status: 'PENDING' as const,
+  };
+}
+
 @Injectable()
 export class TradingEngineService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(TradingEngineService.name);
@@ -121,6 +141,9 @@ export class TradingEngineService implements OnModuleInit, OnModuleDestroy {
   private reconcileSweepInterval: ReturnType<typeof setInterval> | null = null;
   /** 终态二次对账的延迟句柄：优雅停机时须清理，避免拖住进程/在依赖销毁后触发 */
   private readonly finalReconcileTimers = new Set<ReturnType<typeof setTimeout>>();
+  /** 触发式单单自愈：onOwnFillSettled 后按 runCode 去重的宽限定时器。 */
+  private readonly pendingOwnFillChecks = new Map<string, ReturnType<typeof setTimeout>>();
+  private static readonly OWN_FILL_GRACE_MS = 5_000;
   private static readonly RECONCILE_SWEEP_MS = 60_000;
   /** 终态二次对账延迟：须覆盖 close 单 order.create 提交与交易所 REST 成交可见延迟 */
   private static readonly FINAL_RECONCILE_RETRY_DELAY_MS = 5_000;
@@ -896,6 +919,13 @@ export class TradingEngineService implements OnModuleInit, OnModuleDestroy {
   /** 已上报的关键事件（runCode:kind:reason）。内存去重：重启后重发可接受（设计 spec §五）。 */
   private readonly reportedCriticalEvents = new Set<string>();
 
+  /** 按 runCode 记录漂移观测状态：runner.getState().position 只在 cleanStateCycle 里刷新（ORDER_ACTIVE/
+   * PAUSED 期间会跳过），单次观测到的漂移可能只是尚未刷新的过期快照。要求连续两次周期 sweep（间隔约60s）都
+   * 观测到漂移才真正告警——过期快照活不过第二次复查，真实未同步的持仓则会。差值恢复到阈值内后重置，
+   * 允许下次独立漂移重新计数、重新告警。 */
+  private readonly driftObservations = new Map<string, { consecutive: number; alerted: boolean }>();
+  private static readonly DRIFT_ALERT_THRESHOLD_OBSERVATIONS = 2;
+
   /** Runner 关键事件 → 系统通知。永不抛错（在 runner 回调链上）。 */
   private async reportCriticalEvent(runCode: string, symbol: string, event: RunnerCriticalEvent): Promise<void> {
     const key = `${runCode}:${event.kind}:${event.reason}`;
@@ -921,6 +951,101 @@ export class TradingEngineService implements OnModuleInit, OnModuleDestroy {
       this.logger.error(`[${runCode}] reportCriticalEvent failed: ${(err as Error).message}`);
       this.reportedCriticalEvents.delete(key);
     }
+  }
+
+  /** 周期 sweep：比对 DB 推算持仓与 runner 已知的交易所持仓，超阈值只告警一次直至差值恢复
+   *（不暂停机器人，纯监控用途，交易所调用已由 runner.getState() 内存态提供，不产生额外 API 调用）。 */
+  private async checkPositionDrift(runCode: string, runner: GridBotRunner): Promise<void> {
+    const state = runner.getState();
+    if (!state?.position) return;
+    const run = await this.prisma.run.findUnique({ where: { runCode } });
+    if (!run) return;
+    const minPortion = (run.configSnapshot as Record<string, unknown> | null)?.mainGridPortionSize as number | undefined;
+    if (!minPortion || minPortion <= 0) return;
+
+    const drifted = detectPositionDrift(run.pnlSignedPosition, state.position.baseAssetQty, minPortion);
+    if (!drifted) {
+      this.driftObservations.delete(runCode);
+      return;
+    }
+    const observation = this.driftObservations.get(runCode) ?? { consecutive: 0, alerted: false };
+    observation.consecutive += 1;
+    this.driftObservations.set(runCode, observation);
+    if (observation.consecutive < TradingEngineService.DRIFT_ALERT_THRESHOLD_OBSERVATIONS) return;
+    if (observation.alerted) return;
+    observation.alerted = true;
+    try {
+      await this.notificationService.createAndBroadcast({
+        type: 'alert',
+        title: 'Position drift detected',
+        code: 'POSITION_DRIFT_DETECTED',
+        body: `${runCode}: db=${run.pnlSignedPosition} exchange=${state.position.baseAssetQty}`,
+        params: {
+          runCode,
+          dbQty: run.pnlSignedPosition.toFixed(6),
+          exchangeQty: state.position.baseAssetQty.toFixed(6),
+        },
+      });
+    } catch (err) {
+      this.logger.error(`[${runCode}] position-drift notification failed: ${(err as Error).message}`);
+      observation.alerted = false;
+    }
+  }
+
+  /** 手动触发对账：解析机器人当前活跃 run，真实对账后返回新增成交数与双侧持仓对比，
+   * 供前端"立即查看是否补齐"使用。无活跃 run / runner 未在内存中运行时明确报错，不静默返回空结果。 */
+  async reconcileRobot(robotId: string): Promise<{
+    newFillsCount: number;
+    dbPosition: number;
+    exchangePosition: number;
+    positionMatches: boolean;
+  }> {
+    const robot = await this.prisma.robot.findUnique({ where: { id: robotId } });
+    if (!robot) throw new NotFoundException(`Robot ${robotId} not found`);
+    if (!robot.activeBoxId) throw new BadRequestException(`Robot ${robotId} has no active box`);
+
+    const run = await this.prisma.run.findFirst({ where: { boxId: robot.activeBoxId, endedAt: null } });
+    if (!run) throw new BadRequestException(`Robot ${robotId} has no active run`);
+
+    const adapter = this.sessionAdapterMap.get(run.runCode);
+    if (!adapter) throw new BadRequestException(`Robot ${robotId}'s runner is not currently running`);
+
+    const { newFillsCount } = await this.fillReconcile.reconcileRun(run.runCode, robot.symbol, adapter);
+
+    const updatedRun = await this.prisma.run.findUnique({ where: { id: run.id } });
+    const dbPosition = updatedRun?.pnlSignedPosition ?? 0;
+    const exchangePosition = (await adapter.getPosition(robot.symbol)).baseAssetQty;
+    const minPortion = (updatedRun?.configSnapshot as Record<string, unknown> | null)?.mainGridPortionSize as number | undefined;
+    const positionMatches = !minPortion || minPortion <= 0
+      ? Math.abs(dbPosition - exchangePosition) < 1e-9
+      : !detectPositionDrift(dbPosition, exchangePosition, minPortion);
+
+    return { newFillsCount, dbPosition, exchangePosition, positionMatches };
+  }
+
+  /** GridBotRunner 自身成交结算触发：同一 runCode 短时间内多次触发只排一次检查
+   * （reconcileRun 本来就是拉「自最后一笔成交以来」的全部成交，不需要按单触发）。 */
+  private scheduleOwnFillCheck(runCode: string, clientOrderId: string): void {
+    if (this.pendingOwnFillChecks.has(runCode)) return;
+    const timer = setTimeout(() => {
+      this.pendingOwnFillChecks.delete(runCode);
+      void this.checkAndReconcileIfMissing(runCode, clientOrderId).catch((e) =>
+        this.logger.warn(`[${runCode}] own-fill grace check failed: ${(e as Error).message}`),
+      );
+    }, TradingEngineService.OWN_FILL_GRACE_MS);
+    this.pendingOwnFillChecks.set(runCode, timer);
+  }
+
+  private async checkAndReconcileIfMissing(runCode: string, clientOrderId: string): Promise<void> {
+    const existing = await this.prisma.fill.findFirst({
+      where: { run: { runCode }, order: { clientOrderId } },
+      select: { id: true },
+    });
+    if (existing) return;
+    const adapter = this.sessionAdapterMap.get(runCode);
+    const runner = this.runners.get(runCode);
+    if (!adapter || !runner) return;
+    await this.fillReconcile.reconcileRun(runCode, runner.symbol, adapter);
   }
 
   private async startRunner(
@@ -956,22 +1081,7 @@ export class TradingEngineService implements OnModuleInit, OnModuleDestroy {
       },
       onOrderPlaced: (o) => {
         void this.prisma.order.create({
-          data: {
-            runId,
-            // 平仓单无自定义 id（交易所回报空/平台默认值），存 null：
-            // 归属只靠 exchangeOrderId，且不与 (runId, clientOrderId) 唯一约束冲突
-            clientOrderId: o.clientOrderId || null,
-            exchangeOrderId: o.exchangeOrderId,
-            orderType: o.orderType,
-            side: o.side,
-            qty: o.qty,
-            price: o.price,
-            gridIndex: o.gridIndex >= 0 ? o.gridIndex : null,
-            isAlgo: o.isAlgo,
-            preOrderPosition: o.preOrderPosition,
-            isEntry: o.isEntry,
-            status: 'PENDING',
-          },
+          data: buildOrderCreateData(o, runId),
         }).catch((e) => this.logger.error(`[${config.runCode}] order persist failed: ${(e as Error).message}`));
       },
       onFillEvent: (event) => {
@@ -979,6 +1089,9 @@ export class TradingEngineService implements OnModuleInit, OnModuleDestroy {
           .ingest(config.runCode, event)
           .then(() => this.gateway?.broadcastSessionUpdate(config.runCode))
           .catch((e) => this.logger.error(`[${config.runCode}] fill ingest failed: ${(e as Error).message}`));
+      },
+      onOwnFillSettled: (clientOrderId: string) => {
+        this.scheduleOwnFillCheck(config.runCode, clientOrderId);
       },
       onCriticalEvent: (event: RunnerCriticalEvent) => {
         void this.reportCriticalEvent(config.runCode, config.symbol, event);
@@ -1023,6 +1136,8 @@ export class TradingEngineService implements OnModuleInit, OnModuleDestroy {
         void this.fillReconcile
           .reconcileRun(runCode, runner.symbol, adapter)
           .catch((e) => this.logger.warn(`[${runCode}] periodic reconcile failed: ${(e as Error).message}`));
+        void this.checkPositionDrift(runCode, runner)
+          .catch((e) => this.logger.warn(`[${runCode}] position drift check failed: ${(e as Error).message}`));
       }
     }, TradingEngineService.RECONCILE_SWEEP_MS);
   }
@@ -1041,6 +1156,8 @@ export class TradingEngineService implements OnModuleInit, OnModuleDestroy {
     }
     for (const timer of this.finalReconcileTimers) clearTimeout(timer);
     this.finalReconcileTimers.clear();
+    for (const timer of this.pendingOwnFillChecks.values()) clearTimeout(timer);
+    this.pendingOwnFillChecks.clear();
   }
 
   private buildBotConfig(
@@ -1057,7 +1174,6 @@ export class TradingEngineService implements OnModuleInit, OnModuleDestroy {
       stopLossGridStep: number;
       isolationStep: number | null;
       reorderThreshold: number;
-      gtcBoundary: number;
       gtcThreshold?: number;
       trailingEntry: boolean;
       trailingCallbackRate: number | null;
@@ -1079,7 +1195,6 @@ export class TradingEngineService implements OnModuleInit, OnModuleDestroy {
       stopLossGridStep: configRecord.stopLossGridStep,
       isolationStep: configRecord.isolationStep ?? configRecord.stopLossGridStep,
       reorderThreshold: configRecord.reorderThreshold,
-      gtcBoundary: configRecord.gtcBoundary,
       gtcThreshold: configRecord.gtcThreshold ?? 0.001,
       trailingEntry: configRecord.trailingEntry,
       trailingCallbackRate: configRecord.trailingCallbackRate ?? undefined,

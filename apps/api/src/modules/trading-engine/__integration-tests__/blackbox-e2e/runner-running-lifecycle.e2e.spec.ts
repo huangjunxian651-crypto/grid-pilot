@@ -29,7 +29,6 @@ function makeShortConfig(): BotConfig {
     stopLossGridStep: 15,
     isolationStep: 60,
     reorderThreshold: 0.0002,
-    gtcBoundary: 1.02,
     gtcThreshold: 0.001,
     trailingEntry: false,
     pollIntervalMs: 100,
@@ -51,7 +50,6 @@ function makeConfig(): BotConfig {
     stopLossGridStep: 2.5,
     isolationStep: 2.5,
     reorderThreshold: 0.0002,
-    gtcBoundary: 1.02,
     gtcThreshold: 0.001,
     trailingEntry: false,
     pollIntervalMs: 100,
@@ -261,8 +259,27 @@ describe('SHORT 箱体全生命周期（d 空间镜像）', () => {
     }
   });
 
-  it('场景3：止损清算——价格涨穿 fullPositionPrice（2800）时 FSM → LIQUIDATING，并触发 closePosition', async () => {
-    // SHORT 止损：价格上涨超过 fullPositionPrice=2800（d > mainGridDepth=600，且 stopLossGridCount>0）
+  it('场景3a：价格涨穿 fullPositionPrice（2800）但未到清算线时，FSM 保持 RUNNING（止损区应逐格减仓，不整体清算）', async () => {
+    // regression guard: 2026-05-31 e200380 曾把清算阈值从 boxDepth（清算线）误改成
+    // mainGridDepth（满仓线），导致止损区从未被真正走到。
+    adapter.pushPosition(-1.0, 2500);
+    await shortRunner.start();
+    await delay(100);
+
+    expect(shortRunner.getState()?.fsm.kind).toBe('RUNNING');
+
+    // 价格上涨到 2801（d = 601，刚越过 mainGridDepth=600，但远未到 boxDepth=720/liquidationPrice=2920）
+    adapter.pushTick(2801);
+    await delay(300);
+
+    expect(shortRunner.getState()?.fsm.kind).toBe('RUNNING');
+    expect(adapter.closedPositions.length).toBe(0);
+
+    await shortRunner.stop();
+  });
+
+  it('场景3b：止损清算——价格涨穿清算线 liquidationPrice（2920）时 FSM → LIQUIDATING，并触发 closePosition', async () => {
+    // SHORT 止损：价格上涨超过 liquidationPrice=2920（d > boxDepth=720，且 stopLossGridCount>0）
     // 需要有持仓才能触发 closePosition
     // SHORT 持仓：baseAssetQty = -1.0
     adapter.pushPosition(-1.0, 2500);
@@ -271,8 +288,8 @@ describe('SHORT 箱体全生命周期（d 空间镜像）', () => {
 
     expect(shortRunner.getState()?.fsm.kind).toBe('RUNNING');
 
-    // 价格上涨到 2801（d = 2801-2200 = 601 > mainGridDepth=600）
-    adapter.pushTick(2801);
+    // 价格上涨到 2921（d = 2921-2200 = 721 > boxDepth=720）
+    adapter.pushTick(2921);
     await delay(500);
 
     // FSM 应转为 LIQUIDATING，并触发 executeLiquidation()

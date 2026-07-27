@@ -49,7 +49,6 @@ export interface BotConfig {
   stopLossGridStep: number;
   isolationStep: number;
   reorderThreshold: number;
-  gtcBoundary: number;
   gtcThreshold: number;
   tickSize?: number;
   trailingEntry: boolean;
@@ -75,6 +74,8 @@ export interface PlacedOrder {
   preOrderPosition: number;
   /** 进入箱体时的首笔市价建仓（加仓且下单前仓位≈0）：非网格往返，不计超额收益。 */
   isEntry: boolean;
+  /** 下单时的 time-in-force；平仓单(CLOSE)是市价单，无此概念，留空。 */
+  tif?: 'POC' | 'GTC';
 }
 
 export type RunnerCriticalEvent =
@@ -163,6 +164,9 @@ export class GridBotRunner {
       onFill?: (payload: FillPayload) => void;
       onOrderPlaced?: (o: PlacedOrder) => void;
       onFillEvent?: (event: FillEvent & { clientOrderId?: string; side?: 'BUY' | 'SELL' }) => void;
+      /** 自身网格单结算（成交）后触发，供上层做"权威 Fill 表迟迟没有对应记录就立即补拉对账"的检查。
+       * 只在 recordFill() 里调用，算法止损单触发的平仓不经过这条路径。 */
+      onOwnFillSettled?: (clientOrderId: string) => void;
       /** 关键可操作事件上报（可操作拒单/连续拒单自停）；回调异常不得影响主循环 */
       onCriticalEvent?: (event: RunnerCriticalEvent) => void;
     },
@@ -919,7 +923,7 @@ export class GridBotRunner {
         this.stats.totalFills++;
         const fillPrice = result.avgFillPrice ?? result.price ?? currentDecision.price;
         const fillQty = result.filledQty || result.qty || currentDecision.qty;
-        this.emitOrderPlaced(result.clientOrderId ?? clientOrderId, result.orderId ?? '', currentDecision.side, currentDecision.qty, currentDecision.price, currentDecision.gridPrice);
+        this.emitOrderPlaced(result.clientOrderId ?? clientOrderId, result.orderId ?? '', currentDecision.side, currentDecision.qty, currentDecision.price, currentDecision.gridPrice, currentDecision.tif);
         await this.recordFill(
           currentDecision.side,
           fillPrice,
@@ -927,7 +931,7 @@ export class GridBotRunner {
           currentDecision.gridPrice,
           currentDecision.tif,
           result.orderId,
-          result.clientOrderId,
+          result.clientOrderId ?? clientOrderId,
         );
         this.nextSeq++;
         this.stats.totalOrdersPlaced++;
@@ -946,7 +950,7 @@ export class GridBotRunner {
         placedAt: Date.now(),
         preOrderPosition: this.position?.baseAssetQty ?? 0,
       };
-      this.emitOrderPlaced(clientOrderId, result.orderId ?? '', currentDecision.side, currentDecision.qty, currentDecision.price, currentDecision.gridPrice);
+      this.emitOrderPlaced(clientOrderId, result.orderId ?? '', currentDecision.side, currentDecision.qty, currentDecision.price, currentDecision.gridPrice, currentDecision.tif);
       this.consecutiveRejections = 0;
       this.phase = 'ORDER_ACTIVE';
       this.nextSeq++;
@@ -1526,6 +1530,14 @@ export class GridBotRunner {
         this.logger.error(`[${this.config.runCode}] CRITICAL: Failed to persist FILL event: ${(err as Error).message}`);
       }
     }
+
+    if (exchangeClientOrderId) {
+      try {
+        this.deps.onOwnFillSettled?.(exchangeClientOrderId);
+      } catch (err) {
+        this.logger.warn(`[${this.config.runCode}] onOwnFillSettled callback error: ${(err as Error).message}`);
+      }
+    }
   }
 
   private emitOrderPlaced(
@@ -1535,6 +1547,7 @@ export class GridBotRunner {
     qty: number,
     price: number,
     gridPrice: number | undefined,
+    tif: 'POC' | 'GTC' | undefined,
   ): void {
     if (!this.deps.onOrderPlaced) return;
     let gridIndex = -1;
@@ -1557,6 +1570,7 @@ export class GridBotRunner {
         isAlgo: false,
         preOrderPosition,
         isEntry: this.isInitialEntryBuild(side, preOrderPosition),
+        tif,
       });
     } catch (err) {
       this.logger.warn(`[${this.config.runCode}] onOrderPlaced callback error: ${(err as Error).message}`);
@@ -1610,6 +1624,7 @@ export class GridBotRunner {
     return {
       takeProfitPrice: this.config.takeProfitPrice,
       mainGridDepth: lines.mainGridDepth,
+      boxDepth: lines.boxDepth,
       stopLossGridCount: this.config.stopLossGridCount,
       direction: this.config.direction as 'LONG' | 'SHORT',
       activationPrice: toPrice(lines.mainGridDepth / 2, {

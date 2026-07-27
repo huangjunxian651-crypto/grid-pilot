@@ -651,6 +651,53 @@ describe('BotManagerService', () => {
     expect(list[0].credentialId).toBe('cred-1');
   });
 
+  it('listRobots 透出 createdAt/endedAt（供前端机器人下拉展示运行起止时间）', async () => {
+    const { svc, prisma } = makeService();
+    prisma.robot.findMany.mockResolvedValue([{
+      id: 'robot-1', symbol: 'ETH/USDT', direction: 'LONG', status: 'RUNNING', activeBoxId: null,
+      createdAt: new Date('2026-06-01T00:00:00Z'), endedAt: null,
+      account: { id: 'cred-1', exchangeId: 'binance', label: 'main' },
+    }]);
+    prisma.box.findMany.mockResolvedValue([]);
+    prisma.run.findMany.mockResolvedValue([]);
+
+    const [row] = await svc.listRobots();
+
+    expect(row.createdAt).toBe('2026-06-01T00:00:00.000Z');
+    expect(row.endedAt).toBeNull();
+  });
+
+  it('listArchivedRobots 的 endedAt 是非空 ISO 字符串（已归档机器人必有终止时间）', async () => {
+    const { svc, prisma } = makeService();
+    prisma.robot.findMany.mockResolvedValue([{
+      id: 'robot-9', symbol: 'ETH/USDT', direction: 'LONG', status: 'STOPPED', activeBoxId: null,
+      createdAt: new Date('2026-05-01T00:00:00Z'), endedAt: new Date('2026-06-20T00:00:00Z'),
+      account: { id: 'cred-1', exchangeId: 'binance', label: 'main' },
+    }]);
+    prisma.box.findMany.mockResolvedValue([]);
+    prisma.run.findMany.mockResolvedValue([]);
+
+    const [row] = await svc.listArchivedRobots();
+
+    expect(row.createdAt).toBe('2026-05-01T00:00:00.000Z');
+    expect(row.endedAt).toBe('2026-06-20T00:00:00.000Z');
+  });
+
+  it('createdAt/endedAt 缺失时(既有测试 fixture 未提供)不抛错，降级为空字符串/null', async () => {
+    const { svc, prisma } = makeService();
+    prisma.robot.findMany.mockResolvedValue([{
+      id: 'robot-1', symbol: 'ETH/USDT', direction: 'LONG', status: 'RUNNING', activeBoxId: null,
+      account: { id: 'cred-1', exchangeId: 'binance', label: 'main' },
+    }]);
+    prisma.box.findMany.mockResolvedValue([]);
+    prisma.run.findMany.mockResolvedValue([]);
+
+    const [row] = await svc.listRobots();
+
+    expect(row.createdAt).toBe('');
+    expect(row.endedAt).toBeNull();
+  });
+
   it('getRobotDetail 返回 credentialId（= account.id）', async () => {
     const { svc, prisma } = makeService();
     prisma.robot.findUnique.mockResolvedValue({
@@ -749,6 +796,40 @@ describe('BotManagerService', () => {
     ((prisma as any).robot).findUnique = vi.fn().mockResolvedValue(null);
     const detail = await svc.getRobotDetail('nope');
     expect(detail).toBeNull();
+  });
+
+  it('getRobotDetail 透出 createdAt/endedAt（供前端详情页显示运行起止时间）', async () => {
+    const { svc, prisma } = makeService();
+    ((prisma as any).robot).findUnique = vi.fn().mockResolvedValue({
+      id: 'robot-1', symbol: 'ETH/USDT', direction: 'LONG', status: 'RUNNING',
+      activeBoxId: null, createdAt: new Date('2026-06-01T00:00:00Z'), endedAt: null,
+      account: { id: 'cred-1', exchangeId: 'binance', label: 'main' },
+    });
+    prisma.box.findMany.mockResolvedValue([]);
+    prisma.run.findMany.mockResolvedValue([]);
+    prisma.run.findFirst.mockResolvedValue(null);
+
+    const detail = await svc.getRobotDetail('robot-1');
+
+    expect(detail?.createdAt).toBe('2026-06-01T00:00:00.000Z');
+    expect(detail?.endedAt).toBeNull();
+  });
+
+  it('getRobotDetail createdAt/endedAt 缺失时不抛错，降级为空字符串/null（向后兼容既有 fixture）', async () => {
+    const { svc, prisma } = makeService();
+    ((prisma as any).robot).findUnique = vi.fn().mockResolvedValue({
+      id: 'robot-1', symbol: 'ETH/USDT', direction: 'LONG', status: 'PAUSED',
+      activeBoxId: null,
+      account: { id: 'cred-1', exchangeId: 'binance', label: 'main' },
+    });
+    prisma.box.findMany.mockResolvedValue([]);
+    prisma.run.findMany.mockResolvedValue([]);
+    prisma.run.findFirst.mockResolvedValue(null);
+
+    const detail = await svc.getRobotDetail('robot-1');
+
+    expect(detail?.createdAt).toBe('');
+    expect(detail?.endedAt).toBeNull();
   });
 
   it('addBox creates a box with robotId when validation passes', async () => {

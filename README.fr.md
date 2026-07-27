@@ -1,7 +1,14 @@
 # GridPilot
 
 > Plateforme de trading par **grille dynamique** sur contrats perpétuels ETH/USDT · Compatible Binance / Gate.io / OKX
-> Des décisions en temps réel comme un trader qui surveille les marchés, plutôt que de poser des ordres et de les laisser sans surveillance.
+
+**Transforme la grille statique « posez et oubliez » des exchanges en un trader qui surveille les marchés 24 h/24, 7 j/7 — et qui redécide à chaque tick.**
+
+- 🧠 **Ordres pilotés par la surveillance** : fini le lot d'ordres statiques posés en croisant les doigts — à chaque mise à jour du marché, le système réévalue avant de passer, modifier ou annuler un ordre, et lorsque le prix fait un grand bond, il capture même un écart supplémentaire au-delà du pas de la grille
+- 💸 **~0,03 % de frais économisés par transaction** : des ordres Maker Post-Only par défaut pour profiter des frais réduits ; exécution en taker uniquement lorsque le surprofit dépasse le coût du taker ; refus pur et simple de l'ordre lorsque le prix est défavorable
+- 🎯 **Ouverture par suivi — jamais au sommet** : à l'entrée du prix dans la fourchette, on suit d'abord le point bas et on n'ouvre la position qu'après confirmation du rebond, pour éviter de se retrouver coincé dès l'entrée
+- 🛡️ **Stop-loss à tampon en couches** : en cas de cassure brève suivie d'un rebond, la position résiduelle en bénéficie directement — pas de frais gaspillés à liquider entièrement puis reconstruire
+- 🧭 **Suivi automatique multi-fourchettes** : préconfigurez plusieurs fourchettes non chevauchantes ; celle dans laquelle entre le prix devient active
 
 [简体中文](README.md) · [繁體中文](README.zh-TW.md) · [English](README.en.md) · [日本語](README.ja.md) · [Español](README.es.md) · [العربية](README.ar.md) · **Français** · [Português](README.pt.md) · [Italiano](README.it.md) · [한국어](README.ko.md) · [ไทย](README.th.md) · [Tiếng Việt](README.vi.md)
 
@@ -78,11 +85,11 @@ Pour aller plus loin : **en renseignant un code de rétrocession lors de l'inscr
 ### Méthode 1 : Docker tout-en-un (recommandé pour l'auto-hébergement)
 
 ```bash
-git clone <repo-url> && cd grid-pilot
+git clone https://github.com/QuantiaAI/grid-pilot.git && cd grid-pilot
 cp .env.example .env
-# 生成加密密钥并填入 .env 的 ENCRYPTION_KEY
+# Génère la clé de chiffrement et renseigne-la dans ENCRYPTION_KEY du fichier .env
 openssl rand -base64 32
-# 一键起 PostgreSQL + Redis + API + Web（自动执行数据库迁移）
+# Démarre PostgreSQL + Redis + API + Web en une commande (migrations exécutées automatiquement)
 docker compose --profile full up --build -d
 ```
 
@@ -93,11 +100,16 @@ Après le démarrage, accédez à http://localhost:3300 .
 ### Méthode 2 : installation locale (recommandée pour le développement)
 
 ```bash
-git clone <repo-url> && cd grid-pilot
+git clone https://github.com/QuantiaAI/grid-pilot.git && cd grid-pilot
 pnpm install
-cp .env.example .env        # 按需调整端口/密钥
-pnpm dev                    # 先起 docker 基础设施，再起 API + Web
+cp .env.example .env        # ajustez les ports si besoin ; définissez ENCRYPTION_KEY avec la sortie de openssl rand -base64 32
+pnpm --filter @gridpilot/api exec prisma generate       # génère le client Prisma (le postinstall est désactivé — cette étape est obligatoire)
+pnpm dev:infra              # démarre PostgreSQL + Redis
+pnpm exec dotenv -e .env -- pnpm --filter @gridpilot/api exec prisma migrate deploy # première installation uniquement : applique les migrations de la base de données
+pnpm dev:skip-infra         # démarre l'API + le Web
 ```
+
+> Les étapes `prisma generate` / `migrate deploy` ne sont nécessaires qu'une seule fois, lors de la première installation ; ensuite, un simple `pnpm dev` suffit pour tout démarrer.
 
 | Service | Adresse | Option de configuration |
 |------|------|--------|
@@ -109,10 +121,10 @@ pnpm dev                    # 先起 docker 基础设施，再起 API + Web
 Démarrage séparé :
 
 ```bash
-pnpm dev:infra        # 仅 PostgreSQL + Redis
-pnpm dev:api          # 仅后端
-pnpm dev:web          # 仅前端
-pnpm dev:skip-infra   # API + Web，跳过 docker
+pnpm dev:infra        # PostgreSQL + Redis uniquement
+pnpm dev:api          # backend uniquement
+pnpm dev:web          # frontend uniquement
+pnpm dev:skip-infra   # API + Web, sans docker
 ```
 
 ## 🕹️ Mode d'emploi
@@ -155,11 +167,11 @@ Voir tous les paramètres dans [`docs/STRATEGY_SPEC.md`](docs/STRATEGY_SPEC.md).
 | Partagé | TypeScript · pnpm Workspaces · Turborepo |
 
 ```
-apps/web/          # Next.js 前端（暗色主题，12 语）
-apps/api/          # NestJS 后端
-packages/shared-types/  # 前后端共享类型
-docs/              # STRATEGY_SPEC.md（策略规格）· ARCHITECTURE.md（组件映射）
-docker-compose.yml # 默认基础设施；--profile full 全栈
+apps/web/          # Frontend Next.js (thème sombre, 12 langues)
+apps/api/          # Backend NestJS
+packages/shared-types/  # Types partagés entre frontend et backend
+docs/              # STRATEGY_SPEC.md (spéc. stratégie) · ARCHITECTURE.md (mapping des composants)
+docker-compose.yml # Infrastructure par défaut ; --profile full pour la pile complète
 ```
 
 **Machine à états de la stratégie** : `TRAILING_ENTRY → RUNNING → LIQUIDATING → LIQUIDATED`, `RUNNING` peut bifurquer vers `TAKE_PROFIT` ; les branches d'exploitation comprennent `PAUSED` (réinitialisable via `USER_RESUME`), `CANCELLED`, `HOLD`.
@@ -167,9 +179,9 @@ docker-compose.yml # 默认基础设施；--profile full 全栈
 **Commandes de développement** :
 
 ```bash
-pnpm dev          # 一键起所有服务
-pnpm build        # 构建
-pnpm test         # 测试
+pnpm dev          # démarre tous les services en une commande
+pnpm build        # compilation
+pnpm test         # tests
 pnpm lint         # Lint
 ```
 
@@ -177,8 +189,8 @@ pnpm lint         # Lint
 
 ```bash
 cd apps/api
-pnpm prisma migrate dev    # 执行迁移
-pnpm prisma studio         # 查看数据
+pnpm prisma migrate dev    # exécute les migrations
+pnpm prisma studio         # visualise les données
 ```
 
 ## Index de la documentation

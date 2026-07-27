@@ -38,7 +38,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const dir = getTextDir(initialLang);
 
   return (
-    <html lang={htmlLang} dir={dir} className={`${displayFont.variable} ${sansFont.variable} ${monoFont.variable}`}>
+    <html lang={htmlLang} dir={dir} className={`${displayFont.variable} ${sansFont.variable} ${monoFont.variable}`} suppressHydrationWarning>
       <head>
         <script
           dangerouslySetInnerHTML={{

@@ -221,7 +221,6 @@ function makeSafeConfig(symbol: string, marketPrice: number): BotConfig {
     stopLossGridStep,
     isolationStep,
     reorderThreshold: 0.0005,
-    gtcBoundary: 1.02,
     gtcThreshold: 0.001,
     trailingEntry: true,
     trailingCallbackRate: 0.002,

@@ -99,6 +99,7 @@ export default function RobotsPage() {
               <div
                 key={r.id}
                 data-testid="robot-card"
+                className="robot-card"
                 style={{
                   display: "flex", alignItems: "center", gap: 16, padding: "16px 18px",
                   background: "var(--bg-1)", border: "1px solid var(--border-subtle)", borderRadius: 13,
@@ -108,7 +109,7 @@ export default function RobotsPage() {
                 <ExchangeMark exchange={exchangeKey(r.exchangeId)} size={36} />
 
                 {/* 交易对 + 元信息 + 状态 */}
-                <Link href={`/robots/${r.id}`} style={{ flex: 1, minWidth: 0 }}>
+                <Link href={`/robots/${r.id}`} className="robot-card-main" style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 15, fontWeight: 600 }}>
                     {r.symbol}
                     <span data-testid="robot-exchange" style={{ fontSize: 11, color: "var(--fg-3)", fontWeight: 400, fontFamily: "var(--font-mono)", marginLeft: 8 }}>
@@ -127,6 +128,7 @@ export default function RobotsPage() {
                   </div>
                 </Link>
 
+                <div className="robot-card-aside">
                 {/* 总盈亏 / 已实现 / 手续费 / 未实现 */}
                 <div data-testid="robot-pnl">
                   <PnlCell realizedPnl={r.realizedPnl} totalFees={r.totalFees} netPnl={r.netPnl} totalPnl={r.totalPnl} lastUnrealizedPnl={r.lastUnrealizedPnl} />
@@ -176,6 +178,7 @@ export default function RobotsPage() {
                       {t("robot.action_start")}
                     </Button>
                   )}
+                </div>
                 </div>
               </div>
             );

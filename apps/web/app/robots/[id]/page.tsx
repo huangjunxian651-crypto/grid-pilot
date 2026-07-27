@@ -13,6 +13,7 @@ import { deriveLayout, fmt } from "@/lib/store";
 import { useLang } from "@/lib/i18n-context";
 import { useBotEvents } from "@/lib/hooks/useBotEvents";
 import { CopyRobotButton } from "@/components/robots/copy-robot-button";
+import { ReconcileButton } from "./_reconcile-button";
 import { BoxForm } from "@/components/robots/box-form";
 import {
   type BoxFormValue,
@@ -130,6 +131,7 @@ export default function RobotDetailPage({ params }: { params: Promise<{ id: stri
           {robot.status !== "STOPPED" && (
             <Button danger size="md" icon={<Icons.Stop size={13} />} disabled={robot.status === "STOPPING"} onClick={() => { setStopClosePos(true); setShowStopDialog(true); }}>{t("robot.action_stop")}</Button>
           )}
+          <ReconcileButton robotId={robot.id} status={robot.status} />
           {robot.status === "STOPPED" && (
             <CopyRobotButton robotId={robot.id} />
           )}

@@ -7,25 +7,32 @@ const fsm = new BotFsm();
 const FULL_POSITION_PRICE = ETH_RANGE_1_DERIVED.fullPositionPrice;
 const TAKE_PROFIT_PRICE = ETH_RANGE_1.takeProfitPrice;
 const MAIN_GRID_DEPTH = TAKE_PROFIT_PRICE - FULL_POSITION_PRICE;
+// boxDepth = mainGridDepth + isolationStep + stopLossGridCount×stopLossGridStep (liquidationPrice = 2200)
+const BOX_DEPTH = MAIN_GRID_DEPTH + ETH_RANGE_1.isolationStep + ETH_RANGE_1.stopLossGridCount * ETH_RANGE_1.stopLossGridStep;
 
 function runningTickAt(price: number, stopLossGridCount = ETH_RANGE_1.stopLossGridCount, baseQty = 1) {
   return fsm.transition(
     { kind: 'RUNNING', since: 0 },
     { type: 'TICK', price, timestamp: Date.now() },
-    { takeProfitPrice: TAKE_PROFIT_PRICE, mainGridDepth: MAIN_GRID_DEPTH, stopLossGridCount, direction: 'LONG' },
+    { takeProfitPrice: TAKE_PROFIT_PRICE, mainGridDepth: MAIN_GRID_DEPTH, boxDepth: BOX_DEPTH, stopLossGridCount, direction: 'LONG' },
     positionAt(baseQty),
   );
 }
 
 describe('BotFsm (contract, RUNNING → LIQUIDATING trigger)', () => {
-  it('triggers LIQUIDATING when price beyond fullPositionPrice AND stopLossGridCount > 0', () => {
+  it('stays in RUNNING when price is beyond fullPositionPrice but still within the stop-loss zone (regression guard: liquidation must trigger at boxDepth/liquidationPrice, not fullPositionPrice)', () => {
     const r = runningTickAt(FULL_POSITION_PRICE - 1, 4);
+    expect(r.newState.kind).toBe('RUNNING');
+  });
+
+  it('triggers LIQUIDATING only once price crosses boxDepth (liquidationPrice) AND stopLossGridCount > 0', () => {
+    const r = runningTickAt(TAKE_PROFIT_PRICE - BOX_DEPTH - 1, 4);
     expect(r.newState.kind).toBe('LIQUIDATING');
     expect(r.action).toBe('LIQUIDATE_ALL');
   });
 
-  it('does NOT trigger LIQUIDATING when price beyond fullPositionPrice AND stopLossGridCount === 0 (no-stop-loss mode per STRATEGY_SPEC §8.6)', () => {
-    const r = runningTickAt(FULL_POSITION_PRICE - 1, 0);
+  it('does NOT trigger LIQUIDATING when price beyond boxDepth AND stopLossGridCount === 0 (no-stop-loss mode per STRATEGY_SPEC §8.6)', () => {
+    const r = runningTickAt(TAKE_PROFIT_PRICE - BOX_DEPTH - 1, 0);
     expect(r.newState.kind).toBe('RUNNING');
     expect(r.action).toBeUndefined();
   });
@@ -36,16 +43,24 @@ describe('BotFsm (contract, TRAILING_ENTRY exits)', () => {
 
   it('transitions to RUNNING when price rebounds >= callback rate (LONG)', () => {
     // first tick lowers extreme to 2300
-    const r1 = fsm.transition(baseTrail, { type: 'TICK', price: 2300, timestamp: 0 }, { takeProfitPrice: 2800, mainGridDepth: 600, stopLossGridCount: 4, direction: 'LONG' });
+    const r1 = fsm.transition(baseTrail, { type: 'TICK', price: 2300, timestamp: 0 }, { takeProfitPrice: 2800, mainGridDepth: 600, boxDepth: 620, stopLossGridCount: 4, direction: 'LONG' });
     expect(r1.newState.kind).toBe('TRAILING_ENTRY');
     // second tick: 2300 * 1.002 = 2304.6, price 2305 triggers
-    const r2 = fsm.transition(r1.newState, { type: 'TICK', price: 2305, timestamp: 0 }, { takeProfitPrice: 2800, mainGridDepth: 600, stopLossGridCount: 4, direction: 'LONG' });
+    const r2 = fsm.transition(r1.newState, { type: 'TICK', price: 2305, timestamp: 0 }, { takeProfitPrice: 2800, mainGridDepth: 600, boxDepth: 620, stopLossGridCount: 4, direction: 'LONG' });
     expect(r2.newState.kind).toBe('RUNNING');
     expect(r2.action).toBe('START_MAIN_GRID');
   });
 
-  it('transitions TRAILING_ENTRY → LIQUIDATING when price falls beyond fullPositionPrice (STRATEGY_SPEC §5.1)', () => {
-    const r = fsm.transition(baseTrail, { type: 'TICK', price: 2199, timestamp: 0 }, { takeProfitPrice: 2800, mainGridDepth: 600, stopLossGridCount: 4, direction: 'LONG' });
+  it('stays in TRAILING_ENTRY when price falls beyond fullPositionPrice but still within the stop-loss zone (regression guard)', () => {
+    // fullPositionPrice = 2800-600 = 2200; price=2199 → d=601, just past mainGridDepth but
+    // boxDepth=620 (liquidationPrice=2180) has not been reached yet.
+    const r = fsm.transition(baseTrail, { type: 'TICK', price: 2199, timestamp: 0 }, { takeProfitPrice: 2800, mainGridDepth: 600, boxDepth: 620, stopLossGridCount: 4, direction: 'LONG' });
+    expect(r.newState.kind).toBe('TRAILING_ENTRY');
+  });
+
+  it('transitions TRAILING_ENTRY → LIQUIDATING when price falls beyond boxDepth (liquidationPrice, STRATEGY_SPEC §5.1)', () => {
+    // boxDepth=620 → liquidationPrice=2180; price=2179 → d=621 > boxDepth
+    const r = fsm.transition(baseTrail, { type: 'TICK', price: 2179, timestamp: 0 }, { takeProfitPrice: 2800, mainGridDepth: 600, boxDepth: 620, stopLossGridCount: 4, direction: 'LONG' });
     expect(r.newState.kind).toBe('LIQUIDATING');
     expect(r.action).toBeUndefined(); // TRAILING_ENTRY path drives liquidation via state, not action — avoid double-firing in runner
   });
@@ -57,7 +72,7 @@ describe('BotFsm (contract, TRAILING_ENTRY exits)', () => {
     const r = fsm.transition(
       baseTrail,
       { type: 'TICK', price: 2199, timestamp: 0 },
-      { takeProfitPrice: 2800, mainGridDepth: 600, stopLossGridCount: 0, direction: 'LONG' },
+      { takeProfitPrice: 2800, mainGridDepth: 600, boxDepth: 620, stopLossGridCount: 0, direction: 'LONG' },
     );
     expect(r.newState.kind).toBe('TRAILING_ENTRY');
   });
@@ -65,10 +80,10 @@ describe('BotFsm (contract, TRAILING_ENTRY exits)', () => {
 
 describe('BotFsm (contract, TAKE_PROFIT conditions)', () => {
   it('transitions RUNNING → TAKE_PROFIT only when price >= takeProfitPrice AND position is zero', () => {
-    const withPos = fsm.transition({ kind: 'RUNNING', since: 0 }, { type: 'TICK', price: 2801, timestamp: 0 }, { takeProfitPrice: 2800, mainGridDepth: 600, stopLossGridCount: 4, direction: 'LONG' }, positionAt(0.5));
+    const withPos = fsm.transition({ kind: 'RUNNING', since: 0 }, { type: 'TICK', price: 2801, timestamp: 0 }, { takeProfitPrice: 2800, mainGridDepth: 600, boxDepth: 620, stopLossGridCount: 4, direction: 'LONG' }, positionAt(0.5));
     expect(withPos.newState.kind).toBe('RUNNING');
 
-    const noPos = fsm.transition({ kind: 'RUNNING', since: 0 }, { type: 'TICK', price: 2801, timestamp: 0 }, { takeProfitPrice: 2800, mainGridDepth: 600, stopLossGridCount: 4, direction: 'LONG' }, positionAt(0));
+    const noPos = fsm.transition({ kind: 'RUNNING', since: 0 }, { type: 'TICK', price: 2801, timestamp: 0 }, { takeProfitPrice: 2800, mainGridDepth: 600, boxDepth: 620, stopLossGridCount: 4, direction: 'LONG' }, positionAt(0));
     expect(noPos.newState.kind).toBe('TAKE_PROFIT');
   });
 });
@@ -76,21 +91,26 @@ describe('BotFsm (contract, TAKE_PROFIT conditions)', () => {
 describe('BotFsm (contract) — TAKE_PROFIT is terminal (Go bot_controller.go:199-203)', () => {
   it('LONG: TAKE_PROFIT does NOT transition to LIQUIDATED on price falling back below takeProfitPrice (LONG 止盈线)', () => {
     const tp = { kind: 'TAKE_PROFIT' as const, startTime: 0, exitPrice: 2801 };
-    const r = fsm.transition(tp, { type: 'TICK', price: 2799, timestamp: 0 }, { takeProfitPrice: 2800, mainGridDepth: 600, stopLossGridCount: 4, direction: 'LONG' });
+    const r = fsm.transition(tp, { type: 'TICK', price: 2799, timestamp: 0 }, { takeProfitPrice: 2800, mainGridDepth: 600, boxDepth: 620, stopLossGridCount: 4, direction: 'LONG' });
     expect(r.newState.kind).toBe('TAKE_PROFIT'); // terminal — stays put
   });
   it('SHORT: TAKE_PROFIT does NOT transition on price rising back above takeProfitPrice (SHORT 止盈线)', () => {
     const tp = { kind: 'TAKE_PROFIT' as const, startTime: 0, exitPrice: 2199 };
-    const r = fsm.transition(tp, { type: 'TICK', price: 2201, timestamp: 0 }, { takeProfitPrice: 2200, mainGridDepth: 600, stopLossGridCount: 4, direction: 'SHORT' });
+    const r = fsm.transition(tp, { type: 'TICK', price: 2201, timestamp: 0 }, { takeProfitPrice: 2200, mainGridDepth: 600, boxDepth: 620, stopLossGridCount: 4, direction: 'SHORT' });
     expect(r.newState.kind).toBe('TAKE_PROFIT');
   });
 });
 
 describe('BotFsm SHORT 镜像（d 空间统一后）', () => {
-  const shortCfg = { takeProfitPrice: 2200, mainGridDepth: 600, stopLossGridCount: 4, direction: 'SHORT' as const };
+  const shortCfg = { takeProfitPrice: 2200, mainGridDepth: 600, boxDepth: 620, stopLossGridCount: 4, direction: 'SHORT' as const };
 
-  it('RUNNING: 价格升破满仓线（2800）→ LIQUIDATING + LIQUIDATE_ALL', () => {
+  it('RUNNING: 价格升破满仓线但未到清算线 → 保持 RUNNING（止损区应逐格减仓，不整体清算，regression guard）', () => {
     const r = fsm.transition({ kind: 'RUNNING', since: 0 }, { type: 'TICK', price: 2801, timestamp: 0 }, shortCfg);
+    expect(r.newState.kind).toBe('RUNNING');
+  });
+
+  it('RUNNING: 价格升破清算线（boxDepth=620 → 2820）→ LIQUIDATING + LIQUIDATE_ALL', () => {
+    const r = fsm.transition({ kind: 'RUNNING', since: 0 }, { type: 'TICK', price: 2821, timestamp: 0 }, shortCfg);
     expect(r.newState.kind).toBe('LIQUIDATING');
     expect(r.action).toBe('LIQUIDATE_ALL');
   });
@@ -124,10 +144,11 @@ describe('BotFsm (contract) — PAUSED 恢复分支（domain-guide §2.3）', ()
   const LONG_CFG = {
     takeProfitPrice: TAKE_PROFIT_PRICE,
     mainGridDepth: MAIN_GRID_DEPTH,
+    boxDepth: BOX_DEPTH,
     stopLossGridCount: ETH_RANGE_1.stopLossGridCount,
     direction: 'LONG' as const,
   };
-  const SHORT_CFG = { takeProfitPrice: 2200, mainGridDepth: 600, stopLossGridCount: 4, direction: 'SHORT' as const };
+  const SHORT_CFG = { takeProfitPrice: 2200, mainGridDepth: 600, boxDepth: 620, stopLossGridCount: 4, direction: 'SHORT' as const };
   const paused = () => ({ kind: 'PAUSED' as const, reason: 'manual', since: 0 });
 
   // C1：恢复且有仓 → RUNNING + START_MAIN_GRID

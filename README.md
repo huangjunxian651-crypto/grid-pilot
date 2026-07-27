@@ -1,7 +1,14 @@
 # GridPilot
 
 > ETH/USDT 永续合约**动态网格**交易平台 · 兼容 Binance / Gate.io / OKX
-> 像盯盘交易员一样实时决策，而非把单子挂上去就不管。
+
+**把交易所"挂上就不管"的静态网格，升级成一位 7×24 小时盯盘的交易员——每次行情跳动都重新决策。**
+
+- 🧠 **动态盯盘下单**：不再一次性批量挂单后听天由命——每次行情更新都重新判断后才下单/改单/撤单，价格大幅跳跃时还能捕获超出网格步长的额外价差
+- 💸 **每笔约省 0.03% 手续费**：默认挂 Post-Only Maker 单吃低费率，只在超额利润盖过吃单成本时才特许吃单，价位不利直接拒单
+- 🎯 **追踪建仓，不在山顶开仓**：价格进区间先追低点，确认反弹后才建仓，避免一进场就被套
+- 🛡️ **分层止损缓冲**：短暂跌破又反弹时残余仓位直接受益，省去一次性清仓再重建的手续费
+- 🧭 **多段区间自动跟随**：预配置多个不重叠区间，价格走到哪段，策略就激活哪段
 
 **简体中文** · [繁體中文](README.zh-TW.md) · [English](README.en.md) · [日本語](README.ja.md) · [Español](README.es.md) · [العربية](README.ar.md) · [Français](README.fr.md) · [Português](README.pt.md) · [Italiano](README.it.md) · [한국어](README.ko.md) · [ไทย](README.th.md) · [Tiếng Việt](README.vi.md)
 
@@ -78,7 +85,7 @@
 ### 方式一：Docker 一键全栈（推荐自部署）
 
 ```bash
-git clone <repo-url> && cd grid-pilot
+git clone https://github.com/QuantiaAI/grid-pilot.git && cd grid-pilot
 cp .env.example .env
 # 生成加密密钥并填入 .env 的 ENCRYPTION_KEY
 openssl rand -base64 32
@@ -93,11 +100,16 @@ docker compose --profile full up --build -d
 ### 方式二：本地安装（推荐开发）
 
 ```bash
-git clone <repo-url> && cd grid-pilot
+git clone https://github.com/QuantiaAI/grid-pilot.git && cd grid-pilot
 pnpm install
-cp .env.example .env        # 按需调整端口/密钥
-pnpm dev                    # 先起 docker 基础设施，再起 API + Web
+cp .env.example .env        # 按需调整端口；ENCRYPTION_KEY 填入 openssl rand -base64 32 的输出
+pnpm --filter @gridpilot/api exec prisma generate       # 生成 Prisma Client（postinstall 已禁用，必须手动执行）
+pnpm dev:infra              # 起 PostgreSQL + Redis
+pnpm exec dotenv -e .env -- pnpm --filter @gridpilot/api exec prisma migrate deploy # 仅首次安装：执行数据库迁移
+pnpm dev:skip-infra         # 起 API + Web
 ```
+
+> `prisma generate` / `migrate deploy` 只需首次安装时执行一次；之后日常开发直接 `pnpm dev` 即可一键起所有服务。
 
 | 服务 | 地址 | 配置项 |
 |------|------|--------|

@@ -110,6 +110,8 @@ export interface RobotSummary {
   lastEntryPrice: number | null;
   lastUnrealizedPnl: number | null;
   lastSnapshotAt: Date | null;
+  createdAt: string;
+  endedAt: string | null;
 }
 
 export interface RobotDetail extends RobotSummary {
@@ -236,6 +238,7 @@ export class BotManagerService implements OnApplicationBootstrap {
       stopStage: string | null; stopWarning: string | null;
       lastPositionQty: number | null; lastEntryPrice: number | null;
       lastUnrealizedPnl: number | null; lastSnapshotAt: Date | null;
+      createdAt?: Date; endedAt?: Date | null;
     }>,
   ): Promise<RobotSummary[]> {
     // 批量取所有箱体 + 成交(3 查询,避免 per-robot N+1)
@@ -302,6 +305,8 @@ export class BotManagerService implements OnApplicationBootstrap {
         lastEntryPrice: r.lastEntryPrice ?? null,
         lastUnrealizedPnl,
         lastSnapshotAt: r.lastSnapshotAt ?? null,
+        createdAt: r.createdAt ? r.createdAt.toISOString() : '',
+        endedAt: r.endedAt ? r.endedAt.toISOString() : null,
       };
     });
   }
@@ -430,6 +435,8 @@ export class BotManagerService implements OnApplicationBootstrap {
       lastEntryPrice: r.lastEntryPrice ?? null,
       lastUnrealizedPnl: lastUnrealizedPnlDetail,
       lastSnapshotAt: r.lastSnapshotAt ?? null,
+      createdAt: r.createdAt ? r.createdAt.toISOString() : '',
+      endedAt: r.endedAt ? r.endedAt.toISOString() : null,
       boxes: boxes.map((b: Record<string, unknown>) => ({
         id: b.id as string,
         direction: b.direction as string,

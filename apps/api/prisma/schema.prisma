@@ -83,7 +83,6 @@ model Box {
   trailingCallbackRate   Float           @default(0.002)
   excessProfitMultiplier Float           @default(2.0)
   reorderThreshold       Float           @default(0.0002)
-  gtcBoundary            Float           @default(0.02)
   trailingEntry          Boolean         @default(false)
   trailDistance          Float?
   entryPrice             Float?
@@ -138,6 +137,7 @@ model Order {
   filledQty       Float     @default(0)
   avgFillPrice    Float?
   gridIndex       Int?
+  tif             String?
   preOrderPosition Float?
   subGridIndex    Int?
   isAlgo          Boolean   @default(false)
@@ -166,6 +166,7 @@ model Fill {
   fee              Float    @default(0)
   feeAsset         String?
   gridIndex        Int?
+  notional         Float?
   savings          Float    @default(0)
   savingsRate      Float    @default(0)
   avgGridPrice     Float?

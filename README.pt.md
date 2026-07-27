@@ -1,7 +1,14 @@
 # GridPilot
 
 > Plataforma de negociação com **grade dinâmica** para contratos perpétuos ETH/USDT · Compatível com Binance / Gate.io / OKX
-> Decisões em tempo real, como um trader que acompanha o mercado de perto, em vez de simplesmente colocar as ordens e esquecê-las.
+
+**Eleva a grade estática das corretoras — do tipo "colocar e esquecer" — ao nível de um trader que acompanha o mercado 24/7, repensando cada decisão a cada atualização de preço.**
+
+- 🧠 **Ordens que acompanham o mercado em tempo real**: chega de colocar um lote estático de ordens e torcer — a cada atualização de preço o sistema reavalia antes de colocar, modificar ou cancelar ordens, e em saltos bruscos ainda captura um spread adicional além do passo da grade
+- 💸 **Economia de ~0,03% de taxa por operação**: por padrão coloca ordens Maker Post-Only para pagar taxa menor; só toma a liquidez ativamente quando o lucro excedente supera o custo de tomar; em preços desfavoráveis, recusa a ordem diretamente
+- 🎯 **Entrada com trailing — nunca abra posição no topo**: ao entrar na faixa, o sistema primeiro persegue o ponto baixo e só abre a posição após confirmar o repique, evitando ficar preso logo na entrada
+- 🛡️ **Amortecimento de stop loss em camadas**: se o preço romper para baixo brevemente e repicar, a posição residual se beneficia diretamente — sem gastar taxas com uma saída total e a reconstrução da posição
+- 🧭 **Múltiplas faixas com acompanhamento automático**: configure previamente várias faixas que não se sobrepõem; em qual faixa o preço entrar, aquela estratégia é ativada
 
 [简体中文](README.md) · [繁體中文](README.zh-TW.md) · [English](README.en.md) · [日本語](README.ja.md) · [Español](README.es.md) · [العربية](README.ar.md) · [Français](README.fr.md) · **Português** · [Italiano](README.it.md) · [한국어](README.ko.md) · [ไทย](README.th.md) · [Tiếng Việt](README.vi.md)
 
@@ -78,11 +85,11 @@ E vai além: **ao preencher um código de rebate ao se cadastrar na corretora, v
 ### Opção 1: Docker full stack em um comando (recomendado para auto-hospedagem)
 
 ```bash
-git clone <repo-url> && cd grid-pilot
+git clone https://github.com/QuantiaAI/grid-pilot.git && cd grid-pilot
 cp .env.example .env
-# 生成加密密钥并填入 .env 的 ENCRYPTION_KEY
+# Gere a chave de criptografia e preencha ENCRYPTION_KEY no .env
 openssl rand -base64 32
-# 一键起 PostgreSQL + Redis + API + Web（自动执行数据库迁移）
+# Sobe PostgreSQL + Redis + API + Web com um comando (migrações executadas automaticamente)
 docker compose --profile full up --build -d
 ```
 
@@ -93,11 +100,16 @@ Após iniciar, acesse http://localhost:3300 .
 ### Opção 2: Instalação local (recomendado para desenvolvimento)
 
 ```bash
-git clone <repo-url> && cd grid-pilot
+git clone https://github.com/QuantiaAI/grid-pilot.git && cd grid-pilot
 pnpm install
-cp .env.example .env        # 按需调整端口/密钥
-pnpm dev                    # 先起 docker 基础设施，再起 API + Web
+cp .env.example .env        # ajuste as portas conforme necessário; defina ENCRYPTION_KEY com a saída de openssl rand -base64 32
+pnpm --filter @gridpilot/api exec prisma generate       # gera o Prisma Client (o postinstall está desativado — este passo é obrigatório)
+pnpm dev:infra              # sobe PostgreSQL + Redis
+pnpm exec dotenv -e .env -- pnpm --filter @gridpilot/api exec prisma migrate deploy # apenas na primeira instalação: aplica as migrações do banco de dados
+pnpm dev:skip-infra         # inicia API + Web
 ```
+
+> Os passos `prisma generate` / `migrate deploy` só são necessários uma vez, na primeira instalação; depois, basta executar `pnpm dev` para iniciar tudo.
 
 | Serviço | Endereço | Item de configuração |
 |------|------|--------|
@@ -109,10 +121,10 @@ pnpm dev                    # 先起 docker 基础设施，再起 API + Web
 Iniciar individualmente:
 
 ```bash
-pnpm dev:infra        # 仅 PostgreSQL + Redis
-pnpm dev:api          # 仅后端
-pnpm dev:web          # 仅前端
-pnpm dev:skip-infra   # API + Web，跳过 docker
+pnpm dev:infra        # Apenas PostgreSQL + Redis
+pnpm dev:api          # Apenas back-end
+pnpm dev:web          # Apenas front-end
+pnpm dev:skip-infra   # API + Web, sem docker
 ```
 
 ## 🕹️ Instruções de uso
@@ -155,11 +167,11 @@ Os parâmetros completos estão em [`docs/STRATEGY_SPEC.md`](docs/STRATEGY_SPEC.
 | Compartilhado | TypeScript · pnpm Workspaces · Turborepo |
 
 ```
-apps/web/          # Next.js 前端（暗色主题，12 语）
-apps/api/          # NestJS 后端
-packages/shared-types/  # 前后端共享类型
-docs/              # STRATEGY_SPEC.md（策略规格）· ARCHITECTURE.md（组件映射）
-docker-compose.yml # 默认基础设施；--profile full 全栈
+apps/web/          # Front-end Next.js (tema escuro, 12 idiomas)
+apps/api/          # Back-end NestJS
+packages/shared-types/  # Tipos compartilhados entre front-end e back-end
+docs/              # STRATEGY_SPEC.md (especificação da estratégia) · ARCHITECTURE.md (mapeamento de componentes)
+docker-compose.yml # Infraestrutura padrão; --profile full para a stack completa
 ```
 
 **Máquina de estados da estratégia**: `TRAILING_ENTRY → RUNNING → LIQUIDATING → LIQUIDATED`; `RUNNING` pode ramificar para `TAKE_PROFIT`; os ramos operacionais incluem `PAUSED` (que pode ser restaurado com `USER_RESUME`), `CANCELLED` e `HOLD`.
@@ -167,9 +179,9 @@ docker-compose.yml # 默认基础设施；--profile full 全栈
 **Comandos de desenvolvimento**:
 
 ```bash
-pnpm dev          # 一键起所有服务
-pnpm build        # 构建
-pnpm test         # 测试
+pnpm dev          # Inicia todos os serviços com um comando
+pnpm build        # Build
+pnpm test         # Testes
 pnpm lint         # Lint
 ```
 
@@ -177,8 +189,8 @@ pnpm lint         # Lint
 
 ```bash
 cd apps/api
-pnpm prisma migrate dev    # 执行迁移
-pnpm prisma studio         # 查看数据
+pnpm prisma migrate dev    # Executa as migrações
+pnpm prisma studio         # Visualiza os dados
 ```
 
 ## Índice da documentação

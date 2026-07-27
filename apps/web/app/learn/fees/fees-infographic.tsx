@@ -94,6 +94,7 @@ export function FeesInfographic() {
         {/* 费率与返佣比例表 */}
         <SectionTitle>{t("fees.table_title")}</SectionTitle>
         <div style={{ background: "var(--bg-1)", border: "1px solid var(--border-subtle)", borderRadius: 14, overflow: "hidden", marginBottom: 24 }}>
+          <div className="gp-table-scroll">
           <table data-testid="fees-rate-table" style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr style={{ color: "var(--fg-3)", fontSize: 10, textTransform: "uppercase", letterSpacing: 0.6 }}>
@@ -128,6 +129,7 @@ export function FeesInfographic() {
               })}
             </tbody>
           </table>
+          </div>
           <div style={{ padding: "11px 18px", borderTop: "1px solid var(--border-subtle)", fontSize: 11, color: "var(--fg-3)" }}>{t("fees.table_note")}</div>
         </div>
 

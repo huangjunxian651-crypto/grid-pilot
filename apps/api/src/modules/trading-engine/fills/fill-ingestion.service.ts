@@ -56,11 +56,11 @@ export class FillIngestionService {
    * 并发会丢失更新（末写者覆盖、PnL 基值陈旧）。用 per-runCode promise 链强制串行，
    * 每笔都读到上一笔提交后的最新状态。单进程单例，进程内串行即正确。
    */
-  private readonly chains = new Map<string, Promise<unknown>>();
+  private readonly chains = new Map<string, Promise<boolean>>();
 
-  async ingest(runCode: string, event: IngestableFill): Promise<void> {
+  async ingest(runCode: string, event: IngestableFill): Promise<boolean> {
     const prev = this.chains.get(runCode) ?? Promise.resolve();
-    const next = prev.catch(() => {}).then(() => this.ingestInner(runCode, event));
+    const next = prev.catch(() => false).then(() => this.ingestInner(runCode, event));
     this.chains.set(runCode, next);
     // 链尾自清理，避免 Map 无限增长（仅当自己仍是链尾时删除）。
     // 末尾 .catch 吞掉「清理链」副本的 rejection（next 本身的错误由调用方 await 处理），
@@ -68,15 +68,15 @@ export class FillIngestionService {
     void next.finally(() => {
       if (this.chains.get(runCode) === next) this.chains.delete(runCode);
     }).catch(() => {});
-    return next as Promise<void>;
+    return next as Promise<boolean>;
   }
 
-  private async ingestInner(runCode: string, event: IngestableFill): Promise<void> {
+  private async ingestInner(runCode: string, event: IngestableFill): Promise<boolean> {
     const run = await this.prisma.run.findUnique({
       where: { runCode },
       include: { box: { select: { symbol: true, accountId: true } } },
     });
-    if (!run) { this.logger.warn(`[${runCode}] ingest: run not found`); return; }
+    if (!run) { this.logger.warn(`[${runCode}] ingest: run not found`); return false; }
 
     let order = await this.resolveOrder(run.id, event);
     if (!order) {
@@ -106,11 +106,11 @@ export class FillIngestionService {
         });
         if (foreign) {
           this.logger.debug(`[${runCode}] ingest: fill ex=${event.orderId} belongs to another run, skipped`);
-          return;
+          return false;
         }
       }
       this.logger.warn(`[${runCode}] ingest: no order for clientOrderId=${event.clientOrderId} ex=${event.orderId}`);
-      return;
+      return false;
     }
 
     const exchangeFillId = event.fillId || `${event.orderId}_${event.timestamp}_${event.qty}_${event.clientOrderId ?? ''}`;
@@ -118,7 +118,7 @@ export class FillIngestionService {
     const existing = await this.prisma.fill.findUnique({
       where: { exchangeFillId_orderId: { exchangeFillId, orderId: order.id } },
     });
-    if (existing) return;
+    if (existing) return false;
 
     const side = (event.side ?? order.side) as 'BUY' | 'SELL';
     const targetConfig = this.buildConfig(run.configSnapshot as Record<string, unknown>);
@@ -164,6 +164,7 @@ export class FillIngestionService {
             side,
             qty: event.qty,
             price: event.price,
+            notional: event.qty * event.price,
             fee: feeRaw,
             feeAsset: event.commissionAsset ?? null,
             gridIndex: gridIndex >= 0 ? gridIndex : null,
@@ -199,12 +200,13 @@ export class FillIngestionService {
     } catch (err) {
       if ((err as { code?: string }).code === 'P2002') {
         this.logger.warn(`[${runCode}] ingest: duplicate fill ${exchangeFillId} (P2002), treated as already ingested`);
-        return;
+        return false;
       }
       throw err;
     }
     // 事务提交成功后刷新权威缓存（= DB 新的 realizedPnl），供 getStatus 同步读取。
     this.realizedPnlByRun.set(runCode, run.realizedPnl + delta);
+    return true;
   }
 
   /**

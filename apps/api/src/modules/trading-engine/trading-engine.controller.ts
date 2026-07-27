@@ -7,6 +7,7 @@ import {
   Body,
   Param,
   Query,
+  Res,
   HttpException,
   HttpStatus,
   InternalServerErrorException,
@@ -14,6 +15,7 @@ import {
   BadRequestException,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { TradingEngineService } from './trading-engine.service';
 import { SessionService } from './session/session.service';
 import { PersistenceService } from './persistence/persistence.service';
@@ -68,6 +70,54 @@ class EditBoxDto {
   @IsOptional() @IsNumber() activationPrice?: number;
   @IsOptional() @IsBoolean() trailingEntry?: boolean;
   @IsOptional() @IsNumber() isolationStep?: number;
+}
+
+type RouteFilter = 'POC' | 'GTC' | 'UNKNOWN';
+type FillSortBy = 'time' | 'notional' | 'realizedPnl' | 'fee';
+
+/** listEvents(FILL) 与 events/export 共用的过滤/排序构造——避免两个接口的过滤条件漂移。 */
+function buildFillEventsQuery(params: {
+  robotId?: string;
+  route?: RouteFilter;
+  search?: string;
+  since?: string;
+  until?: string;
+  sortBy?: FillSortBy;
+  sortDir?: 'asc' | 'desc';
+}) {
+  const where: Record<string, unknown> = {};
+
+  if (params.robotId) {
+    where.run = { box: { robotId: params.robotId } };
+  }
+  if (params.route) {
+    where.order = { tif: params.route === 'UNKNOWN' ? null : params.route };
+  }
+  if (params.search) {
+    const contains = { contains: params.search, mode: 'insensitive' as const };
+    where.OR = [
+      { run: { box: { symbol: contains } } },
+      { order: { exchangeOrderId: contains } },
+      { order: { clientOrderId: contains } },
+      { run: { box: { account: { label: contains } } } },
+    ];
+  }
+  if (params.since || params.until) {
+    where.filledAt = {
+      ...(params.since ? { gte: new Date(params.since) } : {}),
+      ...(params.until ? { lte: new Date(params.until) } : {}),
+    };
+  }
+
+  const sortField: Record<FillSortBy, string> = {
+    time: 'filledAt',
+    notional: 'notional',
+    realizedPnl: 'realizedPnlDelta',
+    fee: 'fee',
+  };
+  const orderBy = { [sortField[params.sortBy ?? 'time']]: params.sortDir ?? 'desc' };
+
+  return { where, orderBy };
 }
 
 @UseGuards(AuthGuard)
@@ -238,6 +288,20 @@ export class TradingEngineController {
     }
   }
 
+  @Post('robots/:id/reconcile')
+  async reconcileRobot(@Param('id') id: string) {
+    try {
+      const result = await this.service.reconcileRobot(id);
+      return { success: true, robotId: id, ...result };
+    } catch (err) {
+      if (err instanceof HttpException) throw err;
+      throw new HttpException(
+        { success: false, error: (err as Error).message },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
   @Post('robots/:id/stop')
   async stopRobot(@Param('id') id: string, @Body() body: { closePosition?: boolean }) {
     try {
@@ -328,7 +392,7 @@ export class TradingEngineController {
     savings: number; savingsRate: number; fee: number; feeAsset?: string | null;
     avgGridPrice?: number | null;
     realizedPnlDelta: number; filledAt: Date; boxId?: string; orderPrice?: number | null;
-    orderId?: string | null; clientOrderId?: string | null;
+    orderId?: string | null; clientOrderId?: string | null; tif?: string | null;
   }, seq: number) {
     return {
       id: f.id,
@@ -351,6 +415,7 @@ export class TradingEngineController {
       seq,
       createdAt: f.filledAt,
       boxId: f.boxId,
+      route: f.tif ?? null,
     };
   }
 
@@ -374,12 +439,13 @@ export class TradingEngineController {
 
     const fills = await this.prisma.fill.findMany({
       where: { runId: run.id },
+      include: { order: { select: { tif: true } } },
       orderBy: { filledAt: 'desc' },
       take,
     });
 
     return {
-      data: fills.map((f, i) => this.mapFillRow(f, fills.length - i)),
+      data: fills.map((f, i) => this.mapFillRow({ ...f, tif: f.order?.tif }, fills.length - i)),
       total: fills.length,
       limit: take,
     };
@@ -422,22 +488,38 @@ export class TradingEngineController {
     @Query('type') type?: string,
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
+    @Query('robotId') robotId?: string,
+    @Query('route') route?: RouteFilter,
+    @Query('search') search?: string,
+    @Query('since') since?: string,
+    @Query('sortBy') sortBy?: FillSortBy,
+    @Query('sortDir') sortDir?: 'asc' | 'desc',
+    @Query('until') until?: string,
   ) {
     const take = limit ? (Number.isNaN(parseInt(limit, 10)) ? 50 : parseInt(limit, 10)) : 50;
     const skip = offset ? (Number.isNaN(parseInt(offset, 10)) ? 0 : parseInt(offset, 10)) : 0;
 
     if (type === 'FILL') {
-      const [fills, total] = await Promise.all([
+      const { where, orderBy } = buildFillEventsQuery({ robotId, route, search, since, until, sortBy, sortDir });
+      // KPI 聚合按完整 where 算全量匹配结果，不能只汇总当前页（否则翻页/切换过滤条件时数字会变）。
+      // maker/gtc/unknown 三个计数各自覆盖 where.order，与用户当前选的 route 无关——这样切到
+      // "只看 GTC" 的表格视图时，上方 KPI 仍能看到 POC/GTC 的完整对比分布，而不是让另一侧归零。
+      const [fills, total, sums, makerCount, gtcCount, unknownRouteCount] = await Promise.all([
         this.prisma.fill.findMany({
+          where,
           include: {
-            run: { include: { box: { select: { id: true, symbol: true, direction: true } } } },
-            order: { select: { price: true, exchangeOrderId: true, clientOrderId: true } },
+            run: { include: { box: { select: { id: true, symbol: true, direction: true, account: { select: { label: true } } } } } },
+            order: { select: { price: true, exchangeOrderId: true, clientOrderId: true, tif: true } },
           },
-          orderBy: { filledAt: 'desc' },
+          orderBy,
           take,
           skip,
         }),
-        this.prisma.fill.count(),
+        this.prisma.fill.count({ where }),
+        this.prisma.fill.aggregate({ where, _sum: { fee: true, savings: true, realizedPnlDelta: true } }),
+        this.prisma.fill.count({ where: { ...where, order: { tif: 'POC' } } }),
+        this.prisma.fill.count({ where: { ...where, order: { tif: 'GTC' } } }),
+        this.prisma.fill.count({ where: { ...where, order: { tif: null } } }),
       ]);
 
       return {
@@ -451,16 +533,26 @@ export class TradingEngineController {
               orderPrice: f.order?.price,
               orderId: f.order?.exchangeOrderId,
               clientOrderId: f.order?.clientOrderId,
+              tif: f.order?.tif,
             },
             total - skip - i,
           ),
           configId: f.run?.box?.id ?? null,
           symbol: f.run?.box?.symbol ?? null,
           direction: f.run?.box?.direction ?? null,
+          accountLabel: f.run?.box?.account?.label ?? null,
         })),
         total,
         limit: take,
         offset: skip,
+        aggregates: {
+          totalFee: sums._sum.fee ?? 0,
+          totalSavings: sums._sum.savings ?? 0,
+          totalRealizedPnl: sums._sum.realizedPnlDelta ?? 0,
+          makerCount,
+          gtcCount,
+          unknownRouteCount,
+        },
       };
     }
 
@@ -500,6 +592,71 @@ export class TradingEngineController {
     };
   }
 
+  /** 超过此行数拒绝导出（明确报错，让用户缩小过滤范围），而不是静默截断或让单进程扛超大结果集——
+   * 这个进程同时托管真实交易 runner，一次性拉几万行 Fill 拼成大字符串会挤占内存/GC。 */
+  private static readonly EXPORT_MAX_ROWS = 50000;
+
+  /** 单元格首字符是 =/+/-/@ 时会被 Excel/Sheets 当公式解析；前置一个单引号使其保持纯文本，
+   * 防止导出里的自由文本字段（如账户标签）被恶意构造成公式注入。 */
+  private static escapeCsvCell(value: string): string {
+    return /^[=+\-@]/.test(value) ? `'${value}` : value;
+  }
+
+  @Get('events/export')
+  async exportEventsCsv(
+    @Res() res: Response,
+    @Query('robotId') robotId?: string,
+    @Query('route') route?: RouteFilter,
+    @Query('search') search?: string,
+    @Query('since') since?: string,
+    @Query('sortBy') sortBy?: FillSortBy,
+    @Query('sortDir') sortDir?: 'asc' | 'desc',
+    @Query('until') until?: string,
+  ) {
+    const { where, orderBy } = buildFillEventsQuery({ robotId, route, search, since, until, sortBy, sortDir });
+
+    const total = await this.prisma.fill.count({ where });
+    if (total > TradingEngineController.EXPORT_MAX_ROWS) {
+      throw new BadRequestException(
+        `匹配 ${total} 条记录，超过单次导出上限 ${TradingEngineController.EXPORT_MAX_ROWS} 条，请缩小过滤范围（时间段/机器人/路由）后重试`,
+      );
+    }
+
+    const fills = await this.prisma.fill.findMany({
+      where,
+      include: {
+        run: { include: { box: { select: { symbol: true, direction: true, account: { select: { label: true } } } } } },
+        order: { select: { exchangeOrderId: true, clientOrderId: true, tif: true } },
+      },
+      orderBy,
+    });
+
+    const header = ['时间', '交易对', '账户', '方向', '格号', '价格', '数量', '成交额', '路由', '手续费', '超额收益', '已实现盈亏', '交易所订单号'];
+    const rows = fills.map((f) => [
+      f.filledAt.toISOString(),
+      f.run?.box?.symbol ?? '',
+      f.run?.box?.account?.label ?? '',
+      f.side,
+      f.gridIndex ?? '',
+      f.price,
+      f.qty,
+      f.notional ?? f.qty * f.price,
+      f.order?.tif ?? '',
+      f.fee,
+      f.savings,
+      f.realizedPnlDelta,
+      f.order?.exchangeOrderId ?? '',
+    ]);
+    const csvBody = [header, ...rows]
+      .map((row) => row.map((cell) => `"${TradingEngineController.escapeCsvCell(String(cell)).replace(/"/g, '""')}"`).join(','))
+      .join('\n');
+    const csv = '﻿' + csvBody; // UTF-8 BOM，Excel 打开中文不乱码
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="history-${Date.now()}.csv"`);
+    res.send(csv);
+  }
+
   @Get('configs/:configId/pnl')
   async getConfigPnl(@Param('configId') configId: string) {
     return this.savings.getRealizedPnlByConfig(configId);
@@ -512,10 +669,15 @@ export class TradingEngineController {
     const box = await this.prisma.box.findUnique({ where: { id: configId }, include: { runs: { select: { id: true } } } });
     const runIds = (box?.runs ?? []).map((r) => r.id);
     const fills = runIds.length
-      ? await this.prisma.fill.findMany({ where: { runId: { in: runIds } }, orderBy: { filledAt: 'desc' }, take })
+      ? await this.prisma.fill.findMany({
+          where: { runId: { in: runIds } },
+          include: { order: { select: { tif: true } } },
+          orderBy: { filledAt: 'desc' },
+          take,
+        })
       : [];
     return {
-      data: fills.map((f, i) => this.mapFillRow(f, fills.length - i)),
+      data: fills.map((f, i) => this.mapFillRow({ ...f, tif: f.order?.tif }, fills.length - i)),
       total: fills.length,
       limit: take,
     };
@@ -556,7 +718,7 @@ export class TradingEngineController {
       },
       include: {
         run: { select: { boxId: true } },
-        order: { select: { price: true, exchangeOrderId: true, clientOrderId: true } },
+        order: { select: { price: true, exchangeOrderId: true, clientOrderId: true, tif: true } },
       },
       orderBy: [{ filledAt: 'desc' }, { id: 'desc' }],
       take,
@@ -566,7 +728,7 @@ export class TradingEngineController {
     const summary = await this.savings.getRobotSummaryMetrics(robotId);
 
     return {
-      data: fills.map((f, i) => this.mapFillRow({ ...f, boxId: f.run.boxId ?? undefined, orderPrice: f.order?.price, orderId: f.order?.exchangeOrderId, clientOrderId: f.order?.clientOrderId }, fills.length - i)),
+      data: fills.map((f, i) => this.mapFillRow({ ...f, boxId: f.run.boxId ?? undefined, orderPrice: f.order?.price, orderId: f.order?.exchangeOrderId, clientOrderId: f.order?.clientOrderId, tif: f.order?.tif }, fills.length - i)),
       boxes,
       summary,
       total: fills.length,

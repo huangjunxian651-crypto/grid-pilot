@@ -21,6 +21,7 @@ const mockTradingEngineService = {
   stopBot: vi.fn(),
   pauseBot: vi.fn(),
   resumeBot: vi.fn(),
+  reconcileRobot: vi.fn(),
 };
 
 const mockSessionService = {
@@ -33,7 +34,7 @@ const mockPrismaService = {
   eventLog: { findMany: vi.fn(), count: vi.fn() },
   box: { findMany: vi.fn(), findUnique: vi.fn() },
   run: { findUnique: vi.fn() },
-  fill: { findMany: vi.fn(), count: vi.fn(), findFirst: vi.fn() },
+  fill: { findMany: vi.fn(), count: vi.fn(), findFirst: vi.fn(), aggregate: vi.fn() },
   order: { count: vi.fn() },
   equitySnapshot: { findMany: vi.fn(), findFirst: vi.fn() },
 };
@@ -88,6 +89,7 @@ describe('TradingEngineController', () => {
 
     controller = moduleRef.get<TradingEngineController>(TradingEngineController);
     vi.clearAllMocks();
+    mockPrismaService.fill.aggregate.mockResolvedValue({ _sum: { fee: 0, savings: 0, realizedPnlDelta: 0 } });
   });
 
   describe('GET /trading-engine/dashboard', () => {
@@ -222,6 +224,256 @@ describe('TradingEngineController', () => {
       });
     });
 
+    it('robotId 过滤：通过 run.box.robotId 关联(机器人1:N箱体，不能直接按 box.id 过滤)', async () => {
+      mockPrismaService.fill.findMany.mockResolvedValue([]);
+      mockPrismaService.fill.count.mockResolvedValue(0);
+
+      await controller.listEvents('FILL', undefined, undefined, 'robot-1');
+
+      expect(mockPrismaService.fill.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ run: { box: { robotId: 'robot-1' } } }),
+        }),
+      );
+    });
+
+    it('route=UNKNOWN 过滤：只返回 order.tif 为 null 的成交', async () => {
+      mockPrismaService.fill.findMany.mockResolvedValue([]);
+      mockPrismaService.fill.count.mockResolvedValue(0);
+
+      await controller.listEvents('FILL', undefined, undefined, undefined, 'UNKNOWN');
+
+      expect(mockPrismaService.fill.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ order: { tif: null } }) }),
+      );
+    });
+
+    it('route=POC 过滤：按 order.tif="POC"', async () => {
+      mockPrismaService.fill.findMany.mockResolvedValue([]);
+      mockPrismaService.fill.count.mockResolvedValue(0);
+
+      await controller.listEvents('FILL', undefined, undefined, undefined, 'POC');
+
+      expect(mockPrismaService.fill.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ order: { tif: 'POC' } }) }),
+      );
+    });
+
+    it('search 用 OR 匹配交易对/交易所订单号/clientOrderId/账户标签', async () => {
+      mockPrismaService.fill.findMany.mockResolvedValue([]);
+      mockPrismaService.fill.count.mockResolvedValue(0);
+
+      await controller.listEvents('FILL', undefined, undefined, undefined, undefined, 'BTC');
+
+      const call = mockPrismaService.fill.findMany.mock.calls[0][0];
+      expect(call.where.OR).toEqual([
+        { run: { box: { symbol: { contains: 'BTC', mode: 'insensitive' } } } },
+        { order: { exchangeOrderId: { contains: 'BTC', mode: 'insensitive' } } },
+        { order: { clientOrderId: { contains: 'BTC', mode: 'insensitive' } } },
+        { run: { box: { account: { label: { contains: 'BTC', mode: 'insensitive' } } } } },
+      ]);
+    });
+
+    it('多个过滤条件组合时是 AND 关系(robotId + route + search 同时生效，互不覆盖)', async () => {
+      mockPrismaService.fill.findMany.mockResolvedValue([]);
+      mockPrismaService.fill.count.mockResolvedValue(0);
+
+      await controller.listEvents('FILL', undefined, undefined, 'robot-9', 'POC', 'ETH');
+
+      const call = mockPrismaService.fill.findMany.mock.calls[0][0];
+      expect(call.where.run).toEqual({ box: { robotId: 'robot-9' } });
+      expect(call.where.order).toEqual({ tif: 'POC' });
+      expect(call.where.OR).toBeTruthy();
+    });
+
+    it('since 过滤起始时间；sortBy=notional + sortDir=asc 映射到 orderBy', async () => {
+      mockPrismaService.fill.findMany.mockResolvedValue([]);
+      mockPrismaService.fill.count.mockResolvedValue(0);
+
+      await controller.listEvents('FILL', undefined, undefined, undefined, undefined, undefined, '2026-07-01T00:00:00.000Z', 'notional', 'asc');
+
+      expect(mockPrismaService.fill.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ filledAt: { gte: new Date('2026-07-01T00:00:00.000Z') } }),
+          orderBy: { notional: 'asc' },
+        }),
+      );
+    });
+
+    it('until 过滤结束时间；同时传 since+until 时两端都生效(自定义任意区间)', async () => {
+      mockPrismaService.fill.findMany.mockResolvedValue([]);
+      mockPrismaService.fill.count.mockResolvedValue(0);
+
+      await controller.listEvents(
+        'FILL', undefined, undefined, undefined, undefined, undefined,
+        '2026-06-01T00:00:00.000Z', undefined, undefined,
+        '2026-06-20T00:00:00.000Z',
+      );
+
+      expect(mockPrismaService.fill.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            filledAt: { gte: new Date('2026-06-01T00:00:00.000Z'), lte: new Date('2026-06-20T00:00:00.000Z') },
+          }),
+        }),
+      );
+    });
+
+    it('只传 until 不传 since 时，filledAt 只有 lte 一侧', async () => {
+      mockPrismaService.fill.findMany.mockResolvedValue([]);
+      mockPrismaService.fill.count.mockResolvedValue(0);
+
+      await controller.listEvents(
+        'FILL', undefined, undefined, undefined, undefined, undefined,
+        undefined, undefined, undefined,
+        '2026-06-20T00:00:00.000Z',
+      );
+
+      expect(mockPrismaService.fill.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ filledAt: { lte: new Date('2026-06-20T00:00:00.000Z') } }) }),
+      );
+    });
+
+    it('都不传 since/until 时不带 filledAt 过滤(向后兼容既有行为)', async () => {
+      mockPrismaService.fill.findMany.mockResolvedValue([]);
+      mockPrismaService.fill.count.mockResolvedValue(0);
+
+      await controller.listEvents('FILL');
+
+      const call = mockPrismaService.fill.findMany.mock.calls[0][0];
+      expect(call.where.filledAt).toBeUndefined();
+    });
+
+    it('route 字段来自 order.tif，accountLabel 来自 run.box.account.label', async () => {
+      mockPrismaService.fill.findMany.mockResolvedValue([
+        {
+          id: 'fl-2', side: 'BUY', qty: 0.01, price: 100, gridIndex: 0,
+          savings: 0, savingsRate: 0, fee: 0, realizedPnlDelta: 0,
+          filledAt: new Date('2026-07-01T00:00:00Z'),
+          run: { box: { id: 'cfg-2', symbol: 'BTC/USDT', direction: 'LONG', account: { label: 'demo' } } },
+          order: { price: 100, tif: 'GTC' },
+        },
+      ]);
+      mockPrismaService.fill.count.mockResolvedValue(1);
+
+      const result = await controller.listEvents('FILL');
+
+      expect(result.data[0]).toMatchObject({ route: 'GTC', accountLabel: 'demo' });
+    });
+
+    it('aggregates 反映全量过滤结果(不只当前页)：sum 走完整 where，maker/gtc/unknown 计数各自覆盖 order.tif 与当前 route 选择无关', async () => {
+      mockPrismaService.fill.findMany.mockResolvedValue([]);
+      mockPrismaService.fill.count
+        .mockResolvedValueOnce(999) // total（完整 where）
+        .mockResolvedValueOnce(30) // makerCount（where.order 覆盖为 POC）
+        .mockResolvedValueOnce(60) // gtcCount（覆盖为 GTC）
+        .mockResolvedValueOnce(9); // unknownRouteCount（覆盖为 null）
+      mockPrismaService.fill.aggregate.mockResolvedValue({ _sum: { fee: 12.5, savings: 3.4, realizedPnlDelta: 7.1 } });
+
+      const result = await controller.listEvents('FILL', '10', '20', 'robot-1', 'GTC');
+
+      expect(mockPrismaService.fill.aggregate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ run: { box: { robotId: 'robot-1' } }, order: { tif: 'GTC' } }),
+          _sum: { fee: true, savings: true, realizedPnlDelta: true },
+        }),
+      );
+      // makerCount 的 count 调用必须覆盖 order.tif=POC，即使用户当前选的 route 是 GTC
+      expect(mockPrismaService.fill.count).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ run: { box: { robotId: 'robot-1' } }, order: { tif: 'POC' } }) }),
+      );
+      expect(mockPrismaService.fill.count).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ order: { tif: 'GTC' } }) }),
+      );
+      expect(mockPrismaService.fill.count).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ order: { tif: null } }) }),
+      );
+      expect(result.aggregates).toEqual({
+        totalFee: 12.5,
+        totalSavings: 3.4,
+        totalRealizedPnl: 7.1,
+        makerCount: 30,
+        gtcCount: 60,
+        unknownRouteCount: 9,
+      });
+    });
+
+  describe('GET /trading-engine/events/export', () => {
+    it('按同一套过滤条件导出全部匹配记录为 CSV(不分页)', async () => {
+      mockPrismaService.fill.findMany.mockResolvedValue([
+        {
+          id: 'fl-3', side: 'SELL', qty: 0.02, price: 200, notional: 4, gridIndex: 1,
+          savings: 0.1, savingsRate: 0.01, fee: 0.02, realizedPnlDelta: 0.5,
+          filledAt: new Date('2026-07-01T00:00:00Z'),
+          run: { box: { symbol: 'ETH/USDT', direction: 'SHORT', account: { label: 'main' } } },
+          order: { price: 200, exchangeOrderId: 'ex-3', clientOrderId: 'c-3', tif: 'POC' },
+        },
+      ]);
+
+      const res = { setHeader: vi.fn(), send: vi.fn() };
+      await controller.exportEventsCsv(res as any, undefined, undefined, undefined, undefined, undefined, undefined);
+
+      expect(mockPrismaService.fill.findMany).toHaveBeenCalledWith(
+        expect.not.objectContaining({ take: expect.anything() }),
+      );
+      expect(res.setHeader).toHaveBeenCalledWith('Content-Type', 'text/csv; charset=utf-8');
+      expect(res.setHeader).toHaveBeenCalledWith('Content-Disposition', expect.stringContaining('attachment'));
+      const csv = res.send.mock.calls[0][0] as string;
+      expect(csv).toContain('ETH/USDT');
+      expect(csv).toContain('ex-3');
+      expect(csv).toContain('POC');
+    });
+
+    it('exportEventsCsv 同样支持 until 参数', async () => {
+      mockPrismaService.fill.count.mockResolvedValue(1);
+      mockPrismaService.fill.findMany.mockResolvedValue([]);
+
+      await controller.exportEventsCsv(
+        { setHeader: vi.fn(), send: vi.fn() } as any,
+        undefined, undefined, undefined,
+        '2026-06-01T00:00:00.000Z',
+        undefined, undefined,
+        '2026-06-20T00:00:00.000Z',
+      );
+
+      expect(mockPrismaService.fill.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            filledAt: { gte: new Date('2026-06-01T00:00:00.000Z'), lte: new Date('2026-06-20T00:00:00.000Z') },
+          }),
+        }),
+      );
+    });
+
+    it('账户标签等自由文本以 =/+/-/@ 开头时前置单引号，防 Excel/表格软件公式注入', async () => {
+      mockPrismaService.fill.count.mockResolvedValue(1);
+      mockPrismaService.fill.findMany.mockResolvedValue([
+        {
+          id: 'fl-4', side: 'BUY', qty: 1, price: 100, notional: 100, gridIndex: 0,
+          savings: 0, savingsRate: 0, fee: 0, realizedPnlDelta: 0,
+          filledAt: new Date('2026-07-01T00:00:00Z'),
+          run: { box: { symbol: 'BTC/USDT', direction: 'LONG', account: { label: '=HYPERLINK("http://evil","x")' } } },
+          order: { price: 100, exchangeOrderId: 'ex-4', clientOrderId: 'c-4', tif: 'POC' },
+        },
+      ]);
+
+      const res = { setHeader: vi.fn(), send: vi.fn() };
+      await controller.exportEventsCsv(res as any, undefined, undefined, undefined, undefined, undefined, undefined);
+
+      const csv = res.send.mock.calls[0][0] as string;
+      expect(csv).toContain(`"'=HYPERLINK`);
+    });
+
+    it('匹配记录数超过导出上限时拒绝并报错，而不是静默截断', async () => {
+      mockPrismaService.fill.count.mockResolvedValue(50001);
+
+      await expect(
+        controller.exportEventsCsv({ setHeader: vi.fn(), send: vi.fn() } as any, undefined, undefined, undefined, undefined, undefined, undefined),
+      ).rejects.toThrow(/过滤/);
+      expect(mockPrismaService.fill.findMany).not.toHaveBeenCalled();
+    });
+  });
+
   describe('POST /trading-engine/resume/:sessionCode', () => {
     it('calls service.resumeBot and returns success', async () => {
       mockTradingEngineService.resumeBot.mockResolvedValue(undefined);
@@ -276,6 +528,18 @@ describe('TradingEngineController', () => {
       mockPrismaService.run.findUnique.mockResolvedValue(null);
       await expect(controller.getSessionFills('nonexistent')).rejects.toThrow('not found');
     });
+
+    it('route 字段来自 order.tif，不再永远是未知(此接口曾遗漏 select order.tif)', async () => {
+      mockPrismaService.run.findUnique.mockResolvedValue({ id: 'run1', boxId: 'cfg1' });
+      mockPrismaService.fill.findMany.mockResolvedValue([
+        { id: 'fl1', side: 'BUY', qty: 0.01, price: 2000, gridIndex: 3, savings: 0.5, savingsRate: 0.02, fee: 0.01, realizedPnlDelta: 0, filledAt: new Date(1000), order: { tif: 'GTC' } },
+      ]);
+      const result = await controller.getSessionFills('ETH_test');
+      expect(mockPrismaService.fill.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ include: expect.objectContaining({ order: { select: { tif: true } } }) }),
+      );
+      expect(result.data[0]).toMatchObject({ route: 'GTC' });
+    });
   });
 
   describe('robot endpoints', () => {
@@ -325,6 +589,20 @@ describe('TradingEngineController', () => {
       const res = await controller.pauseRobot('robot-1');
       expect(mockBotManagerService.pauseRobot).toHaveBeenCalledWith('robot-1');
       expect(res).toEqual({ success: true, robotId: 'robot-1' });
+    });
+
+    it('POST /robots/:id/reconcile calls service.reconcileRobot and returns its result', async () => {
+      const reconcileResult = { newFillsCount: 2, dbPosition: 0.5, exchangePosition: 0.5, positionMatches: true };
+      mockTradingEngineService.reconcileRobot.mockResolvedValue(reconcileResult);
+      const res = await controller.reconcileRobot('robot-1');
+      expect(mockTradingEngineService.reconcileRobot).toHaveBeenCalledWith('robot-1');
+      expect(res).toEqual({ success: true, robotId: 'robot-1', ...reconcileResult });
+    });
+
+    it('POST /robots/:id/reconcile wraps service errors as HttpException', async () => {
+      const { HttpException } = await import('@nestjs/common');
+      mockTradingEngineService.reconcileRobot.mockRejectedValue(new Error('boom'));
+      await expect(controller.reconcileRobot('robot-1')).rejects.toBeInstanceOf(HttpException);
     });
 
     it('POST /robots/:id/stop calls requestStop with closePosition default false', async () => {
@@ -409,6 +687,18 @@ describe('TradingEngineController', () => {
       const res = await controller.getConfigFills('cfg-1', undefined);
       expect(res.total).toBe(0);
       expect(res.data).toHaveLength(0);
+    });
+
+    it('route 字段来自 order.tif，不再永远是未知(此接口曾遗漏 select order.tif)', async () => {
+      mockPrismaService.box.findUnique.mockResolvedValue({ id: 'cfg-1', runs: [{ id: 'run1' }] });
+      mockPrismaService.fill.findMany.mockResolvedValue([
+        { id: 'fl1', side: 'BUY', qty: 1, price: 2000, gridIndex: 0, savings: 0, savingsRate: 0, fee: 0, realizedPnlDelta: 0, filledAt: new Date(1000), order: { tif: 'POC' } },
+      ]);
+      const res = await controller.getConfigFills('cfg-1', undefined);
+      expect(mockPrismaService.fill.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ include: expect.objectContaining({ order: { select: { tif: true } } }) }),
+      );
+      expect(res.data[0]).toMatchObject({ route: 'POC' });
     });
   });
 
@@ -585,6 +875,22 @@ describe('GET /trading-engine/robots/:id/fills', () => {
     expect(result.boxes.b1).toMatchObject({ direction: 'LONG', takeProfitPrice: 2800 });
     expect(result.boxes.b2).toMatchObject({ direction: 'LONG', takeProfitPrice: 3000 });
     expect(result.summary).toEqual({ todayRealizedPnl: 1.2, alphaTotal: 0.5 });
+  });
+
+  it('route 字段来自 order.tif，不再永远是未知(此接口曾遗漏 select order.tif)', async () => {
+    mockBotManagerService.getRobotDetail.mockResolvedValue({ id: 'robot-1', boxes: [] } as any);
+    mockPrismaService.box.findMany.mockResolvedValue([]);
+    mockPrismaService.fill.findMany.mockResolvedValue([
+      { id: 'fl2', side: 'SELL', qty: 0.01, price: 2500, gridIndex: 3, savings: 0, savingsRate: 0, fee: 0, realizedPnlDelta: 0, filledAt: new Date(1000), run: { boxId: 'b1' }, order: { price: 2500, tif: 'GTC' } },
+    ]);
+    mockSavingsService.getRobotSummaryMetrics.mockResolvedValue({ todayRealizedPnl: 0, alphaTotal: 0 });
+
+    const result = await controller.getRobotFills('robot-1', '20');
+
+    expect(mockPrismaService.fill.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ include: expect.objectContaining({ order: { select: { price: true, exchangeOrderId: true, clientOrderId: true, tif: true } } }) }),
+    );
+    expect(result.data[0]).toMatchObject({ route: 'GTC' });
   });
 
   it('avgGridPrice 为 0(零哨兵)或 null(历史)时 eventData 透出 undefined → 前端显示「—」', async () => {

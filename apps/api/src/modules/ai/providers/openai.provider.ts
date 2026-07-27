@@ -24,7 +24,14 @@ export class OpenAiProvider implements LlmProvider {
         response_format: { type: "json_object" },
       } as unknown as Parameters<typeof client.chat.completions.create>[0])) as unknown as { choices: Array<{ message: { content: string | null } }> };
     } catch (err) {
-      throw new BadRequestException({ code: "AI_LLM_FAILED", message: `OpenAI call failed: ${(err as Error).message}` });
+      // baseUrl 可以指向任意 OpenAI 协议兼容端点（DeepSeek 等），报错里必须带上
+      // 实际调用的 model/baseUrl，否则一律显示成"OpenAI"会让人误以为要去查
+      // OpenAI 账户或交易所账户，而实际欠费的是这里配置的第三方 LLM 服务商。
+      const endpoint = cfg.baseUrl || "https://api.openai.com/v1 (default)";
+      throw new BadRequestException({
+        code: "AI_LLM_FAILED",
+        message: `LLM call failed (model=${cfg.model} baseUrl=${endpoint}): ${(err as Error).message}`,
+      });
     }
     const content = res.choices?.[0]?.message?.content;
     if (!content) throw new BadRequestException({ code: "AI_LLM_FAILED", message: "Empty LLM response" });

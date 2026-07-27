@@ -155,8 +155,8 @@ export class BotStateReconstructor {
       };
     }
 
-    // d > 主网格深度：价格跌穿满仓线（亏损方向），触发清算
-    if (d > lines.mainGridDepth && stopLossGridCount > 0) {
+    // d > 箱体深度：价格跌穿清算线（亏损方向），触发清算（与 bot-fsm.ts 的判定口径一致）
+    if (d > lines.boxDepth && stopLossGridCount > 0) {
       return {
         kind: 'LIQUIDATING',
         startTime: Date.now(),

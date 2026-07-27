@@ -29,7 +29,6 @@ function makeConfig(): BotConfig {
     stopLossGridStep: 2.5,
     isolationStep: 2.5,
     reorderThreshold: 0.0002,
-    gtcBoundary: 1.02,
     gtcThreshold: 0.001,
     trailingEntry: false,
     pollIntervalMs: 100,

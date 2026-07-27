@@ -1,7 +1,14 @@
 # GridPilot
 
 > ETH/USDT 무기한 계약 **동적 그리드** 트레이딩 플랫폼 · Binance / Gate.io / OKX 호환
-> 주문을 걸어두고 방치하는 대신, 시세를 지켜보는 트레이더처럼 실시간으로 의사결정합니다.
+
+**거래소의 "걸어두고 방치하는" 정적 그리드를, 24시간 난판을 지켜보는 트레이더로 업그레이드합니다——매 틱마다 다시 의사결정합니다.**
+
+- 🧠 **동적 시세 감시 주문**: 일괄 주문을 한 번 걸어두고 운에 맡기지 않습니다——시세가 갱신될 때마다 다시 판단한 후 주문/정정/취소하고, 가격이 크게 점프하면 그리드 스텝을 넘어서는 추가 차익까지 포착합니다
+- 💸 **거래당 약 0.03% 수수료 절약**: 기본적으로 Post-Only Maker 주문을 걸어 더 낮은 수수료율을 취하고, 초과 이익이 테이커 비용을 넘을 때만 특별히 테이커 체결을 허용하며, 가격이 불리하면 곧바로 주문을 거부합니다
+- 🎯 **추적 진입, 고점에서 오픈하지 않음**: 가격이 구간에 진입하면 먼저 저점을 추적하고, 반등을 확인한 후에야 포지션을 잡아 진입하자마자 물리는 것을 방지합니다
+- 🛡️ **계층형 손절 완충**: 가격이 잠깐 깨졌다가 반등하면 잔여 포지션이 그대로 이익을 봅니다——전량 청산 후 재구축하는 수수료가 절약됩니다
+- 🧭 **다중 구간 자동 추종**: 겹치지 않는 여러 구간을 미리 설정해 두면, 가격이 들어온 구간의 전략이 활성화됩니다
 
 [简体中文](README.md) · [繁體中文](README.zh-TW.md) · [English](README.en.md) · [日本語](README.ja.md) · [Español](README.es.md) · [العربية](README.ar.md) · [Français](README.fr.md) · [Português](README.pt.md) · [Italiano](README.it.md) · **한국어** · [ไทย](README.th.md) · [Tiếng Việt](README.vi.md)
 
@@ -78,7 +85,7 @@
 ### 방법 1: Docker 원클릭 풀스택 (셀프 호스팅 권장)
 
 ```bash
-git clone <repo-url> && cd grid-pilot
+git clone https://github.com/QuantiaAI/grid-pilot.git && cd grid-pilot
 cp .env.example .env
 # 암호화 키를 생성하여 .env 의 ENCRYPTION_KEY 에 입력
 openssl rand -base64 32
@@ -93,11 +100,16 @@ docker compose --profile full up --build -d
 ### 방법 2: 로컬 설치 (개발 권장)
 
 ```bash
-git clone <repo-url> && cd grid-pilot
+git clone https://github.com/QuantiaAI/grid-pilot.git && cd grid-pilot
 pnpm install
-cp .env.example .env        # 필요에 따라 포트/키 조정
-pnpm dev                    # 먼저 docker 인프라를 기동한 뒤 API + Web 기동
+cp .env.example .env        # 필요에 따라 포트 조정; ENCRYPTION_KEY 는 openssl rand -base64 32 의 출력으로 설정
+pnpm --filter @gridpilot/api exec prisma generate       # Prisma Client 생성(postinstall 이 비활성화되어 있어 필수 단계)
+pnpm dev:infra              # PostgreSQL + Redis 기동
+pnpm exec dotenv -e .env -- pnpm --filter @gridpilot/api exec prisma migrate deploy # 최초 설치 시에만: 데이터베이스 마이그레이션 적용
+pnpm dev:skip-infra         # API + Web 기동
 ```
+
+> `prisma generate` / `migrate deploy` 단계는 최초 설치 시 한 번만 필요합니다; 이후에는 `pnpm dev` 만 실행하면 모든 서비스가 기동됩니다.
 
 | 서비스 | 주소 | 설정 항목 |
 |------|------|--------|

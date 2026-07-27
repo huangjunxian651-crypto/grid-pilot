@@ -1,7 +1,14 @@
 # GridPilot
 
 > منصة تداول **الشبكة الديناميكية** لعقود ETH/USDT الدائمة · متوافقة مع Binance / Gate.io / OKX
-> تتخذ القرارات في الوقت الفعلي مثل متداول يراقب السوق، بدلاً من وضع الأوامر وتركها دون متابعة.
+
+**ترقّي شبكة البورصة الثابتة «ضع الأوامر وانسَها» إلى متداول يراقب السوق على مدار الساعة — يعيد اتخاذ القرار عند كل تغيّر في السعر.**
+
+- 🧠 **أوامر بمراقبة ديناميكية للسوق**: لا مزيد من وضع دفعة أوامر ثابتة وانتظار القدر — يعيد التقييم عند كل تحديث للسوق قبل وضع/تعديل/إلغاء الأوامر، ويلتقط فروقاً سعرية إضافية تتجاوز خطوة الشبكة عند القفزات السعرية الكبيرة
+- 💸 **توفير ~0.03% من الرسوم في كل صفقة**: أوامر Post-Only Maker افتراضياً للاستفادة من الرسوم الأقل؛ لا يبادر إلى Taker إلا عندما يفوق الربح الزائد تكلفة التنفيذ النشط؛ ويرفض الأمر مباشرةً عند الأسعار غير المواتية
+- 🎯 **بناء المركز بالتتبّع — لا فتح عند القمة أبداً**: عند دخول السعر النطاق يتتبّع القاع أولاً، ولا يبني المركز إلا بعد تأكيد الارتداد، تجنباً للوقوع في الفخ فور الدخول
+- 🛡️ **وقف خسارة طبقي مُخفِّف للصدمات**: عند الكسر المؤقت ثم الارتداد تستفيد المراكز المتبقية مباشرةً — بلا رسوم مهدورة على تصفية كاملة وإعادة بناء
+- 🧭 **تتبّع تلقائي متعدد النطاقات**: جهّز مسبقاً عدة نطاقات غير متداخلة؛ أيّ نطاق يدخله السعر يُفعَّل
 
 [简体中文](README.md) · [繁體中文](README.zh-TW.md) · [English](README.en.md) · [日本語](README.ja.md) · [Español](README.es.md) · **العربية** · [Français](README.fr.md) · [Português](README.pt.md) · [Italiano](README.it.md) · [한국어](README.ko.md) · [ไทย](README.th.md) · [Tiếng Việt](README.vi.md)
 
@@ -78,11 +85,11 @@
 ### الطريقة الأولى: حزمة كاملة بنقرة واحدة عبر Docker (موصى بها للنشر الذاتي)
 
 ```bash
-git clone <repo-url> && cd grid-pilot
+git clone https://github.com/QuantiaAI/grid-pilot.git && cd grid-pilot
 cp .env.example .env
-# 生成加密密钥并填入 .env 的 ENCRYPTION_KEY
+# أنشئ مفتاح التشفير وضعه في ENCRYPTION_KEY في ملف .env
 openssl rand -base64 32
-# 一键起 PostgreSQL + Redis + API + Web（自动执行数据库迁移）
+# شغّل PostgreSQL + Redis + API + Web بأمر واحد (تُنفَّذ ترحيلات قاعدة البيانات تلقائياً)
 docker compose --profile full up --build -d
 ```
 
@@ -93,11 +100,16 @@ docker compose --profile full up --build -d
 ### الطريقة الثانية: التثبيت المحلي (موصى به للتطوير)
 
 ```bash
-git clone <repo-url> && cd grid-pilot
+git clone https://github.com/QuantiaAI/grid-pilot.git && cd grid-pilot
 pnpm install
-cp .env.example .env        # 按需调整端口/密钥
-pnpm dev                    # 先起 docker 基础设施，再起 API + Web
+cp .env.example .env        # عدّل المنافذ حسب الحاجة؛ واضبط ENCRYPTION_KEY على ناتج openssl rand -base64 32
+pnpm --filter @gridpilot/api exec prisma generate       # أنشئ Prisma Client (خطوة postinstall معطّلة — هذه الخطوة إلزامية)
+pnpm dev:infra              # شغّل PostgreSQL + Redis
+pnpm exec dotenv -e .env -- pnpm --filter @gridpilot/api exec prisma migrate deploy # عند التثبيت الأول فقط: طبّق ترحيلات قاعدة البيانات
+pnpm dev:skip-infra         # شغّل API + الواجهة الأمامية
 ```
+
+> خطوتا `prisma generate` / `migrate deploy` مطلوبتان مرة واحدة فقط عند التثبيت الأول؛ بعد ذلك يكفي تشغيل `pnpm dev` لتشغيل كل شيء.
 
 | الخدمة | العنوان | عنصر الإعداد |
 |------|------|--------|
@@ -109,10 +121,10 @@ pnpm dev                    # 先起 docker 基础设施，再起 API + Web
 التشغيل المنفرد:
 
 ```bash
-pnpm dev:infra        # 仅 PostgreSQL + Redis
-pnpm dev:api          # 仅后端
-pnpm dev:web          # 仅前端
-pnpm dev:skip-infra   # API + Web，跳过 docker
+pnpm dev:infra        # PostgreSQL + Redis فقط
+pnpm dev:api          # الواجهة الخلفية فقط
+pnpm dev:web          # الواجهة الأمامية فقط
+pnpm dev:skip-infra   # API + Web مع تخطي docker
 ```
 
 ## 🕹️ تعليمات الاستخدام
@@ -155,11 +167,11 @@ pnpm dev:skip-infra   # API + Web，跳过 docker
 | المشترك | TypeScript · pnpm Workspaces · Turborepo |
 
 ```
-apps/web/          # Next.js 前端（暗色主题，12 语）
-apps/api/          # NestJS 后端
-packages/shared-types/  # 前后端共享类型
-docs/              # STRATEGY_SPEC.md（策略规格）· ARCHITECTURE.md（组件映射）
-docker-compose.yml # 默认基础设施；--profile full 全栈
+apps/web/          # واجهة Next.js الأمامية (سمة داكنة، 12 لغة)
+apps/api/          # واجهة NestJS الخلفية
+packages/shared-types/  # أنواع مشتركة بين الواجهتين الأمامية والخلفية
+docs/              # STRATEGY_SPEC.md (مواصفات الاستراتيجية) · ARCHITECTURE.md (ربط المكوّنات)
+docker-compose.yml # البنية التحتية الافتراضية؛ --profile full للحزمة الكاملة
 ```
 
 **آلة حالة الاستراتيجية**: `TRAILING_ENTRY → RUNNING → LIQUIDATING → LIQUIDATED`، ويمكن لـ `RUNNING` أن يتفرّع إلى `TAKE_PROFIT`؛ وتشمل فروع التشغيل `PAUSED` (يمكن إعادة ضبطه عبر `USER_RESUME`) و`CANCELLED` و`HOLD`.
@@ -167,9 +179,9 @@ docker-compose.yml # 默认基础设施；--profile full 全栈
 **أوامر التطوير**:
 
 ```bash
-pnpm dev          # 一键起所有服务
-pnpm build        # 构建
-pnpm test         # 测试
+pnpm dev          # تشغيل جميع الخدمات بأمر واحد
+pnpm build        # البناء
+pnpm test         # الاختبار
 pnpm lint         # Lint
 ```
 
@@ -177,8 +189,8 @@ pnpm lint         # Lint
 
 ```bash
 cd apps/api
-pnpm prisma migrate dev    # 执行迁移
-pnpm prisma studio         # 查看数据
+pnpm prisma migrate dev    # تنفيذ الترحيلات
+pnpm prisma studio         # عرض البيانات
 ```
 
 ## فهرس الوثائق

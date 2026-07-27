@@ -254,7 +254,7 @@ export default function SettingsPage() {
                     <div style={{ fontSize: 12, color: "var(--fg-2)", fontFamily: "var(--font-mono)", marginTop: 2 }}>{profile?.email ?? "—"}</div>
                   </div>
                 </div>
-                <div className="settings-profile-fields" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+                <div className="settings-profile-fields">
                   <Field label={t("settings.display_name")} value={displayName} onChange={setDisplayName} />
                   <Field label={t("settings.email_field")} value={email} type="email" onChange={setEmail} />
                 </div>

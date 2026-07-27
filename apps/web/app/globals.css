@@ -264,6 +264,34 @@ body {
   .gp-gap-sm-8 { gap: 8px !important; }
 }
 
+/* Docs page: main + 300px rail → 单列（窄屏防右栏溢出） */
+.gp-grid-doc { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 18px; align-items: start; }
+@media (max-width: 900px) {
+  .gp-grid-doc { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Settings: 个人资料双列字段，窄屏改单列 */
+.settings-profile-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 767px) {
+  .settings-profile-fields { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* 机器人卡片（运行中列表 /robots + 归档列表 /robots/archived 共用）：
+   窄屏两行重排（防元信息逐字竖排挤压）。
+   桌面 aside=display:contents → 各区块平铺回卡片 flex（零回归）；
+   窄屏 aside 独占第二行(flex-basis:100%)，第一行只剩 图标+交易对。 */
+.robot-card-aside { display: contents; }
+@media (max-width: 640px) {
+  .robot-card { flex-wrap: wrap !important; row-gap: 12px; }
+  .robot-card-aside {
+    display: flex;
+    flex-basis: 100%;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+}
+
 /* Container max-width utility */
 .gp-container {
   width: 100%;

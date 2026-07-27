@@ -3,8 +3,13 @@ import { toDistance, toPrice } from '@gridpilot/shared-types';
 
 interface FsmConfig {
   takeProfitPrice: number;
-  /** 主网格深度（d 空间，= mainGridCount × mainGridStep）。d > mainGridDepth 即越过满仓线（fullPositionPrice），是清算触发阈值 */
+  /** 主网格深度（d 空间，= mainGridCount × mainGridStep）。d > mainGridDepth 即越过满仓线
+   * （fullPositionPrice），仅用于 TRAILING_ENTRY 的默认激活深度计算，不是清算阈值。 */
   mainGridDepth: number;
+  /** 箱体深度（d 空间，= mainGridDepth + isolationStep + stopLossGridCount × stopLossGridStep）。
+   * d > boxDepth 即越过清算线（liquidationPrice），是清算触发阈值——止损区内应由
+   * StrategyEngine.computeDesiredOrders 逐格递减仓位（STRATEGY_SPEC §8），这里只是兜底。 */
+  boxDepth: number;
   stopLossGridCount: number;
   direction: 'LONG' | 'SHORT';
   activationPrice?: number;
@@ -70,8 +75,8 @@ export class BotFsm {
         return { newState: { kind: 'CANCELLED', reason: 'trailing_window_closed', since: Date.now() } };
       }
 
-      // d > 主网格深度：价格跌穿满仓线（亏损方向），触发清算
-      if (d > config.mainGridDepth && config.stopLossGridCount > 0) {
+      // d > 箱体深度：价格跌穿清算线（亏损方向），触发清算
+      if (d > config.boxDepth && config.stopLossGridCount > 0) {
         return { newState: { kind: 'LIQUIDATING', startTime: Date.now(), attemptCount: 0 } };
       }
 
@@ -128,8 +133,8 @@ export class BotFsm {
         return { newState: state };
       }
 
-      // d > 主网格深度：价格跌穿满仓线（亏损方向），触发清算
-      if (d > config.mainGridDepth && config.stopLossGridCount > 0) {
+      // d > 箱体深度：价格跌穿清算线（亏损方向），触发清算
+      if (d > config.boxDepth && config.stopLossGridCount > 0) {
         return { newState: { kind: 'LIQUIDATING', startTime: Date.now(), attemptCount: 0 }, action: 'LIQUIDATE_ALL' };
       }
     }

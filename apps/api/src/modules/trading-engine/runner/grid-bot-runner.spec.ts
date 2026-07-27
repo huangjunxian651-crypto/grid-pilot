@@ -104,7 +104,6 @@ const createBotConfig = (): BotConfig => ({
   stopLossGridStep: 10,
   isolationStep: 2.5,
   reorderThreshold: 0.0002,
-  gtcBoundary: 0.02,
   gtcThreshold: 1.0,
   trailingEntry: false,
   pollIntervalMs: 10000,
@@ -123,7 +122,6 @@ const createInitialState = (): BotState => ({
     stopLossGridStep: 10,
     isolationStep: 2.5,
     leverage: 10,
-    gtcBoundary: 0.02,
     gtcThreshold: 1.0,
     trailingEntry: false,
   },
@@ -320,6 +318,27 @@ describe('GridBotRunner', () => {
       expect(typeof arg.gridIndex).toBe('number');
       expect(deps.onOrderPlaced).toHaveBeenCalledWith(
         expect.objectContaining({ preOrderPosition: expect.any(Number) }),
+      );
+    });
+
+    it('把 currentDecision.tif 透传进 onOrderPlaced 的 payload（供 route 数据落库）', async () => {
+      await startRunner(runner, adapter, deps, createInitialState());
+
+      deps.fsm.transition.mockReturnValue({ newState: { kind: 'RUNNING', since: Date.now() } });
+      deps.strategy.computeDesiredOrders.mockReturnValue({
+        action: 'PLACE',
+        side: 'BUY',
+        qty: 0.01,
+        price: 2100,
+        gridPrice: 2100,
+        tif: 'POC',
+        reason: 'test',
+      });
+
+      await vi.advanceTimersByTimeAsync(10000);
+
+      expect(deps.onOrderPlaced).toHaveBeenCalledWith(
+        expect.objectContaining({ tif: 'POC' }),
       );
     });
 
@@ -1808,6 +1827,45 @@ describe('GridBotRunner', () => {
       await vi.advanceTimersByTimeAsync(50);
 
       expect(onFill).not.toHaveBeenCalled();
+
+      const stopPromise = fillRunner.stop();
+      await vi.advanceTimersByTimeAsync(6000);
+      await stopPromise;
+    });
+  });
+
+  describe('onOwnFillSettled callback', () => {
+    it('calls onOwnFillSettled with clientOrderId when order settlement resolves FILLED', async () => {
+      const onOwnFillSettled = vi.fn();
+      const localDeps = { ...deps, onOwnFillSettled };
+      const fillRunner = new GridBotRunner(config, adapter, localDeps);
+
+      adapter.subscribeTicker = vi.fn().mockImplementation(async function* () {});
+      adapter.subscribeOrderUpdates = vi.fn().mockImplementation(async function* () {});
+      adapter.subscribePosition = vi.fn().mockImplementation(async function* () {});
+
+      const state = createInitialState();
+      state.position = { symbol: 'ETH/USDT', baseAssetQty: 0.5, quoteAssetQty: -100, entryPrice: 2000, leverage: 10, marginType: 'CROSS' };
+      await fillRunner.start(state);
+
+      localDeps.fsm.transition.mockReturnValue({ newState: { kind: 'RUNNING', since: Date.now() } });
+      localDeps.strategy.computeDesiredOrders.mockReturnValue({
+        action: 'PLACE', side: 'BUY', qty: 0.01, price: 2100, tif: 'GTC', reason: 'test', gridPrice: 2100,
+      });
+
+      await vi.advanceTimersByTimeAsync(10000);
+      expect(fillRunner.getPhase()).toBe('ORDER_ACTIVE');
+
+      (fillRunner as any).resolveOrderSettlement('FILLED', 'ws', {
+        orderId: 'ws-order-1',
+        clientOrderId: 'ETH_test_3',
+        status: 'FILLED',
+        filledQty: 0.008,
+        avgFillPrice: 2099.5,
+      });
+      await vi.advanceTimersByTimeAsync(50);
+
+      expect(onOwnFillSettled).toHaveBeenCalledWith('ETH_test_3');
 
       const stopPromise = fillRunner.stop();
       await vi.advanceTimersByTimeAsync(6000);

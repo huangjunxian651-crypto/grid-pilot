@@ -263,6 +263,17 @@ export interface EngineEvent {
   createdAt: string;
   symbol: string | null;
   direction: string | null;
+  route: string | null;
+  accountLabel: string | null;
+}
+
+export interface EventAggregates {
+  totalFee: number;
+  totalSavings: number;
+  totalRealizedPnl: number;
+  makerCount: number;
+  gtcCount: number;
+  unknownRouteCount: number;
 }
 
 export interface EventListResponse {
@@ -270,6 +281,8 @@ export interface EventListResponse {
   total: number;
   limit: number;
   offset: number;
+  /** 仅 type=FILL 时存在：对完整过滤结果(不只当前页)的汇总，KPI 瓦片应读这里而不是对 data 做 reduce。 */
+  aggregates?: EventAggregates;
 }
 
 export interface FillRecord {
@@ -372,14 +385,42 @@ export const historyApi = {
   savings: (range: HistoryRange) => fetchJson<SavingsHistoryResponse>(`/trading-engine/savings/history?range=${range}`),
 };
 
+export interface EventsQueryParams {
+  type?: string;
+  limit?: number;
+  offset?: number;
+  robotId?: string;
+  route?: "POC" | "GTC" | "UNKNOWN";
+  search?: string;
+  since?: string;
+  until?: string;
+  sortBy?: "time" | "notional" | "realizedPnl" | "fee";
+  sortDir?: "asc" | "desc";
+}
+
+function buildEventsSearchParams(params?: EventsQueryParams): URLSearchParams {
+  const search = new URLSearchParams();
+  if (params?.type) search.set("type", params.type);
+  if (params?.limit != null) search.set("limit", String(params.limit));
+  if (params?.offset != null) search.set("offset", String(params.offset));
+  if (params?.robotId) search.set("robotId", params.robotId);
+  if (params?.route) search.set("route", params.route);
+  if (params?.search) search.set("search", params.search);
+  if (params?.since) search.set("since", params.since);
+  if (params?.until) search.set("until", params.until);
+  if (params?.sortBy) search.set("sortBy", params.sortBy);
+  if (params?.sortDir) search.set("sortDir", params.sortDir);
+  return search;
+}
+
 export const eventsApi = {
-  list: (params?: { type?: string; limit?: number; offset?: number }) => {
-    const search = new URLSearchParams();
-    if (params?.type) search.set("type", params.type);
-    if (params?.limit != null) search.set("limit", String(params.limit));
-    if (params?.offset != null) search.set("offset", String(params.offset));
-    const qs = search.toString();
+  list: (params?: EventsQueryParams) => {
+    const qs = buildEventsSearchParams(params).toString();
     return fetchJson<EventListResponse>(`/trading-engine/events${qs ? `?${qs}` : ""}`);
+  },
+  exportUrl: (params?: Omit<EventsQueryParams, "limit" | "offset">) => {
+    const qs = buildEventsSearchParams(params).toString();
+    return `/api/trading-engine/events/export${qs ? `?${qs}` : ""}`;
   },
 };
 
@@ -460,6 +501,8 @@ export interface Robot {
   lastEntryPrice: number | null;
   lastUnrealizedPnl: number | null;
   lastSnapshotAt: string | null;
+  createdAt: string;
+  endedAt: string | null;
   stopStage: string | null;
   stopWarning: string | null;
 }
@@ -488,6 +531,11 @@ export const robotApi = {
       method: "POST",
       body: JSON.stringify({ closePosition: opts.closePosition ?? false }),
     }),
+  reconcile: (id: string) =>
+    fetchJson<{ success: boolean; robotId: string; newFillsCount: number; dbPosition: number; exchangePosition: number; positionMatches: boolean }>(
+      `/trading-engine/robots/${id}/reconcile`,
+      { method: "POST" },
+    ),
   addBox: (robotId: string, input: AddBoxInput) =>
     fetchJson<{ success: boolean; boxId: string }>(`/trading-engine/robots/${robotId}/boxes`, {
       method: "POST",

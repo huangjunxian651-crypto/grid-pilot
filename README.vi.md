@@ -1,7 +1,14 @@
 # GridPilot
 
 > Nền tảng giao dịch **lưới động (dynamic grid)** cho hợp đồng vĩnh cửu ETH/USDT · Tương thích Binance / Gate.io / OKX
-> Ra quyết định theo thời gian thực như một trader đang theo bảng giá, thay vì đặt lệnh rồi mặc kệ.
+
+**Nâng cấp lưới tĩnh "đặt rồi mặc kệ" của sàn thành một trader theo bảng giá 24/7 — mỗi nhịp giá đều ra quyết định lại.**
+
+- 🧠 **Đặt lệnh động theo bảng giá**: không còn đặt hàng loạt lệnh tĩnh rồi cầu may — mỗi lần giá cập nhật đều đánh giá lại trước khi đặt/sửa/hủy lệnh, và khi giá nhảy vọt mạnh còn bắt được phần chênh lệch vượt quá bước lưới
+- 💸 **Tiết kiệm ~0.03% phí mỗi giao dịch**: mặc định đặt lệnh Post-Only Maker để hưởng phí thấp hơn; chỉ ăn lệnh khi lợi nhuận tăng thêm bù được chi phí ăn lệnh; giá bất lợi thì từ chối lệnh thẳng
+- 🎯 **Vào lệnh theo dõi (trailing entry) — không mở vị thế ở đỉnh**: khi giá vào khoảng, bám đáy trước, xác nhận hồi phục rồi mới mở vị thế, tránh vừa vào lệnh đã bị kẹt
+- 🛡️ **Đệm cắt lỗ theo lớp**: khi giá rớt thủng tạm thời rồi hồi lại, phần vị thế còn lại hưởng lợi trực tiếp — không tốn phí đóng toàn bộ rồi tái lập
+- 🧭 **Tự động theo nhiều khoảng giá**: cấu hình sẵn nhiều khoảng không chồng lấn; giá vào khoảng nào thì kích hoạt khoảng đó
 
 [简体中文](README.md) · [繁體中文](README.zh-TW.md) · [English](README.en.md) · [日本語](README.ja.md) · [Español](README.es.md) · [العربية](README.ar.md) · [Français](README.fr.md) · [Português](README.pt.md) · [Italiano](README.it.md) · [한국어](README.ko.md) · [ไทย](README.th.md) · **Tiếng Việt**
 
@@ -78,11 +85,11 @@ Hơn nữa: **khi đăng ký sàn điền một mã hoàn phí, bạn có thể 
 ### Cách 1: Docker dựng toàn bộ stack một lệnh (khuyến nghị tự triển khai)
 
 ```bash
-git clone <repo-url> && cd grid-pilot
+git clone https://github.com/QuantiaAI/grid-pilot.git && cd grid-pilot
 cp .env.example .env
-# 生成加密密钥并填入 .env 的 ENCRYPTION_KEY
+# Tạo khóa mã hóa và điền vào ENCRYPTION_KEY trong .env
 openssl rand -base64 32
-# 一键起 PostgreSQL + Redis + API + Web（自动执行数据库迁移）
+# Khởi chạy PostgreSQL + Redis + API + Web bằng một lệnh (tự động chạy migration)
 docker compose --profile full up --build -d
 ```
 
@@ -93,11 +100,16 @@ Sau khi khởi động, truy cập http://localhost:3300 .
 ### Cách 2: Cài đặt cục bộ (khuyến nghị cho phát triển)
 
 ```bash
-git clone <repo-url> && cd grid-pilot
+git clone https://github.com/QuantiaAI/grid-pilot.git && cd grid-pilot
 pnpm install
-cp .env.example .env        # 按需调整端口/密钥
-pnpm dev                    # 先起 docker 基础设施，再起 API + Web
+cp .env.example .env        # điều chỉnh cổng nếu cần; đặt ENCRYPTION_KEY bằng kết quả của openssl rand -base64 32
+pnpm --filter @gridpilot/api exec prisma generate       # tạo Prisma Client (postinstall đã bị tắt — bước này bắt buộc)
+pnpm dev:infra              # khởi động PostgreSQL + Redis
+pnpm exec dotenv -e .env -- pnpm --filter @gridpilot/api exec prisma migrate deploy # chỉ lần cài đầu tiên: áp dụng các migration của cơ sở dữ liệu
+pnpm dev:skip-infra         # khởi động API + Web
 ```
+
+> Các bước `prisma generate` / `migrate deploy` chỉ cần chạy một lần ở lần cài đặt đầu tiên; sau đó chỉ cần `pnpm dev` để khởi động mọi thứ.
 
 | Dịch vụ | Địa chỉ | Tùy chọn cấu hình |
 |------|------|--------|
@@ -109,10 +121,10 @@ pnpm dev                    # 先起 docker 基础设施，再起 API + Web
 Khởi động riêng lẻ:
 
 ```bash
-pnpm dev:infra        # 仅 PostgreSQL + Redis
-pnpm dev:api          # 仅后端
-pnpm dev:web          # 仅前端
-pnpm dev:skip-infra   # API + Web，跳过 docker
+pnpm dev:infra        # chỉ PostgreSQL + Redis
+pnpm dev:api          # chỉ backend
+pnpm dev:web          # chỉ frontend
+pnpm dev:skip-infra   # API + Web, bỏ qua docker
 ```
 
 ## 🕹️ Hướng dẫn sử dụng
@@ -155,11 +167,11 @@ Tham số đầy đủ xem tại [`docs/STRATEGY_SPEC.md`](docs/STRATEGY_SPEC.md
 | Dùng chung | TypeScript · pnpm Workspaces · Turborepo |
 
 ```
-apps/web/          # Next.js 前端（暗色主题，12 语）
-apps/api/          # NestJS 后端
-packages/shared-types/  # 前后端共享类型
-docs/              # STRATEGY_SPEC.md（策略规格）· ARCHITECTURE.md（组件映射）
-docker-compose.yml # 默认基础设施；--profile full 全栈
+apps/web/          # Next.js frontend (giao diện tối, 12 ngôn ngữ)
+apps/api/          # NestJS backend
+packages/shared-types/  # kiểu dùng chung giữa frontend và backend
+docs/              # STRATEGY_SPEC.md (đặc tả chiến lược) · ARCHITECTURE.md (ánh xạ thành phần)
+docker-compose.yml # hạ tầng mặc định; --profile full cho toàn stack
 ```
 
 **Máy trạng thái chiến lược**: `TRAILING_ENTRY → RUNNING → LIQUIDATING → LIQUIDATED`, `RUNNING` có thể rẽ nhánh sang `TAKE_PROFIT`; nhánh vận hành gồm `PAUSED` (có thể `USER_RESUME` để khôi phục), `CANCELLED`, `HOLD`.
@@ -167,9 +179,9 @@ docker-compose.yml # 默认基础设施；--profile full 全栈
 **Lệnh phát triển**:
 
 ```bash
-pnpm dev          # 一键起所有服务
-pnpm build        # 构建
-pnpm test         # 测试
+pnpm dev          # khởi động tất cả dịch vụ bằng một lệnh
+pnpm build        # build
+pnpm test         # kiểm thử
 pnpm lint         # Lint
 ```
 
@@ -177,8 +189,8 @@ pnpm lint         # Lint
 
 ```bash
 cd apps/api
-pnpm prisma migrate dev    # 执行迁移
-pnpm prisma studio         # 查看数据
+pnpm prisma migrate dev    # chạy migration
+pnpm prisma studio         # xem dữ liệu
 ```
 
 ## Mục lục tài liệu

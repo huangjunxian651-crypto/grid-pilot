@@ -34,16 +34,19 @@ describe('TradingEngineService.startRunner — 轮询接线', () => {
   let runFindUnique: ReturnType<typeof vi.fn>;
   let notificationMock: { createAndBroadcast: ReturnType<typeof vi.fn> };
 
+  let fillFindFirst: ReturnType<typeof vi.fn>;
+
   function makeSvc() {
     ensurePolling = vi.fn();
     stopPolling = vi.fn();
     mockFillReconcile = { reconcileRun: vi.fn().mockResolvedValue(undefined) };
     runUpdate = vi.fn().mockResolvedValue({});
     runFindUnique = vi.fn().mockResolvedValue({ id: 'run-id', runCode: 'ETHUSDT_x', state: 'PAUSED', endedAt: null, boxId: 'box-1' });
+    fillFindFirst = vi.fn().mockResolvedValue(null);
     notificationMock = { createAndBroadcast: vi.fn().mockResolvedValue({}) };
     const accountSnapshot = { ensurePolling, stopPolling, setOnChanged: vi.fn() };
     const svc = new TradingEngineService(
-      { run: { update: runUpdate, findUnique: runFindUnique } } as any, {} as any, {} as any, {} as any, {} as any,
+      { run: { update: runUpdate, findUnique: runFindUnique }, fill: { findFirst: fillFindFirst } } as any, {} as any, {} as any, {} as any, {} as any,
       accountSnapshot as any, {} as any,
       { ingest: vi.fn().mockResolvedValue(undefined) } as any,
       mockFillReconcile as any,
@@ -254,6 +257,24 @@ describe('TradingEngineService.startRunner — 轮询接线', () => {
     }));
   });
 
+  it('真实 startRunner 接线：onOwnFillSettled 触发 → 宽限期后调用 fillReconcile.reconcileRun（非直接调 scheduleOwnFillCheck 的隔离测试）', async () => {
+    const svc = makeSvc();
+    mockStart.mockResolvedValue(undefined);
+    vi.useFakeTimers();
+    try {
+      await (svc as any).startRunner(config, adapter, 'sess-id', 'cred-1');
+      const runner = (svc as any).runners.get('ETHUSDT_x');
+      mockFillReconcile.reconcileRun.mockClear(); // 清掉冷启动那次 reconcile 调用
+
+      runner.runnerDeps.onOwnFillSettled('client-order-1');
+      await vi.advanceTimersByTimeAsync(5000);
+
+      expect(mockFillReconcile.reconcileRun).toHaveBeenCalledWith('ETHUSDT_x', 'ETH/USDT', adapter);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('通知发送失败时去重 key 回滚，同原因事件可重试', async () => {
     const svc = makeSvc();
     mockStart.mockResolvedValue(undefined);
@@ -286,7 +307,6 @@ describe('TradingEngineService.startBot — 新 run seed 交易所真实持仓 (
     stopLossGridCount: 4,
     stopLossGridStep: 10,
     reorderThreshold: 0.0002,
-    gtcBoundary: 0.02,
     gtcThreshold: 1.0,
     trailingEntry: false,
     trailingCallbackRate: null,

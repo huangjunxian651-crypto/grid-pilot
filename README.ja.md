@@ -1,7 +1,14 @@
 # GridPilot
 
 > ETH/USDT 無期限先物の**ダイナミックグリッド**取引プラットフォーム · Binance / Gate.io / OKX 対応
-> 注文を出して放置するのではなく、相場に張り付くトレーダーのようにリアルタイムで判断します。
+
+**取引所の「出したら放置」の静的グリッドを、24時間365日相場に張り付くトレーダーへとアップグレード——ティックごとに判断し直します。**
+
+- 🧠 **ダイナミック張り付き発注**：一括で静的に注文を出して祈るだけではありません——相場が更新されるたびに判断し直してから発注／注文変更／キャンセルを行い、価格が大きく飛んだ際にはグリッドのステップ幅を超える追加の値幅も捕捉します
+- 💸 **1 トレードあたり約 0.03% の手数料を節約**：デフォルトで Post-Only Maker 注文を出して低い手数料率を取りにいき、超過利益が Taker コストを上回る場合にのみ特別に Taker を許可し、不利な価格では発注自体を拒否します
+- 🎯 **トラッキングエントリー——天井で建玉しない**：価格がレンジに入るとまず安値を追い、反発を確認してから建玉するため、エントリー直後の塩漬けを回避します
+- 🛡️ **階層的ストップロスバッファ**：一時的に割り込んで反発した際に残り建玉がそのまま恩恵を受け、一括決済して建て直す手数料を節約します
+- 🧭 **マルチレンジ自動追随**：重ならない複数レンジをあらかじめ設定しておけば、価格が入ったレンジがそのまま有効化されます
 
 [简体中文](README.md) · [繁體中文](README.zh-TW.md) · [English](README.en.md) · **日本語** · [Español](README.es.md) · [العربية](README.ar.md) · [Français](README.fr.md) · [Português](README.pt.md) · [Italiano](README.it.md) · [한국어](README.ko.md) · [ไทย](README.th.md) · [Tiếng Việt](README.vi.md)
 
@@ -78,11 +85,11 @@
 ### 方法その一：Docker ワンコマンドでフルスタック（セルフホスト推奨）
 
 ```bash
-git clone <repo-url> && cd grid-pilot
+git clone https://github.com/QuantiaAI/grid-pilot.git && cd grid-pilot
 cp .env.example .env
-# 生成加密密钥并填入 .env 的 ENCRYPTION_KEY
+# 暗号化キーを生成し、.env の ENCRYPTION_KEY に設定
 openssl rand -base64 32
-# 一键起 PostgreSQL + Redis + API + Web（自动执行数据库迁移）
+# PostgreSQL + Redis + API + Web を一括起動（データベースマイグレーションは自動実行）
 docker compose --profile full up --build -d
 ```
 
@@ -93,11 +100,16 @@ docker compose --profile full up --build -d
 ### 方法その二：ローカルインストール（開発推奨）
 
 ```bash
-git clone <repo-url> && cd grid-pilot
+git clone https://github.com/QuantiaAI/grid-pilot.git && cd grid-pilot
 pnpm install
-cp .env.example .env        # 按需调整端口/密钥
-pnpm dev                    # 先起 docker 基础设施，再起 API + Web
+cp .env.example .env        # 必要に応じてポートを調整し、ENCRYPTION_KEY には openssl rand -base64 32 の出力を設定
+pnpm --filter @gridpilot/api exec prisma generate       # Prisma Client を生成（postinstall は無効化されているため、このステップは必須）
+pnpm dev:infra              # PostgreSQL + Redis を起動
+pnpm exec dotenv -e .env -- pnpm --filter @gridpilot/api exec prisma migrate deploy # 初回インストール時のみ：データベースマイグレーションを適用
+pnpm dev:skip-infra         # API + Web を起動
 ```
+
+> `prisma generate` / `migrate deploy` は初回インストール時に一度だけ必要です。その後は `pnpm dev` だけで全サービスを起動できます。
 
 | サービス | アドレス | 設定項目 |
 |------|------|--------|
