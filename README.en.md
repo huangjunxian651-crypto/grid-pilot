@@ -2,13 +2,9 @@
 
 > ETH/USDT perpetual futures **dynamic grid** trading platform · compatible with Binance / Gate.io / OKX
 
-**Upgrades the exchange's "place it and forget it" static grid into a trader watching the charts 24/7 — re-deciding on every tick.**
+**The grid bot built into your exchange is a product of a bygone era.**
 
-- 🧠 **Dynamic chart-watching orders**: no more placing a static batch of orders and hoping — it re-evaluates on every market update before placing, amending, or canceling orders, and captures extra spread beyond the grid step when the price jumps sharply
-- 💸 **Saves ~0.03% in fees per trade**: Post-Only Maker orders by default to capture lower rates; takes only when the excess profit outweighs the taker cost; rejects orders outright at unfavorable prices
-- 🎯 **Trailing entry — never open at the top**: when the price enters the range it first trails the low, and builds the position only after confirming a rebound, avoiding getting stuck right at entry
-- 🛡️ **Layered stop-loss buffer**: when the price briefly breaks down and then rebounds, the residual position benefits directly — no fees wasted on a full exit and rebuild
-- 🧭 **Multi-range auto-following**: pre-configure multiple non-overlapping ranges; whichever range the price enters becomes active
+It plants a batch of orders on the book and never looks back — entering without asking the price, stopping out in one slash, and capturing nothing but the dead price on the grid line when the market jumps. GridPilot is a trader watching the charts 24/7: **on every tick, it re-decides whether to act and at what price.**
 
 [简体中文](README.md) · [繁體中文](README.zh-TW.md) · **English** · [日本語](README.ja.md) · [Español](README.es.md) · [العربية](README.ar.md) · [Français](README.fr.md) · [Português](README.pt.md) · [Italiano](README.it.md) · [한국어](README.ko.md) · [ไทย](README.th.md) · [Tiếng Việt](README.vi.md)
 
@@ -30,34 +26,41 @@ Compared with "buy and hold": buy-and-hold only profits if the price ultimately 
 
 > ⚠️ Grid trading is not a guaranteed win: you can still take unrealized losses during a one-sided decline, and leverage amplifies risk. Make sure you understand the strategy before committing funds.
 
-## 🚀 Our 5 Key Innovations Over Exchange-Native Grids
+## 🤔 Before you grid-trade, ask yourself five questions
 
-The grid bots built into exchanges are essentially "place a batch of orders once, leave them untouched, and wait for the market to come hit them." GridPilot's core difference is **using software to simulate an experienced chart-watching trader**:
+**The price is still falling — why is the grid rushing to build a full position at the top?**
+A native grid opens the moment the price enters the range. GridPilot uses **trailing entry**: it follows the low down and enters only after a 0.2% (default) rebound confirms the footing — no bottom-guessing, no instant bag-holding.
+
+**The market moves every second — why do your orders never move once placed?**
+GridPilot re-decides on every market update: cancel when it should, amend when it should, and at any moment there may be no order on the book at all. When the price is unfavorable it refuses rather than chases; when it can fill as a Maker (0.02%) it never wastes a Taker fee (0.05%).
+
+**When the price jumps 5–10 USDT in one tick, what can your grid do but watch?**
+Static resting orders can only ever earn the dead price on the grid line. When the spread exceeds 2× the taker fee, GridPilot deliberately takes liquidity to lock in the extra spread beyond the grid step — and our tests show that the "rougher" an exchange's order book, the higher the excess return.
+
+**A brief dip below the range — why slash the entire position at market in one go?**
+One-click liquidation pays Taker fees *and* forfeits the rebound. GridPilot **trims in stages with limit orders** inside the stop-loss buffer; if the price rebounds, the residual position keeps earning. Only when the liquidation line is breached does the final backstop conditional order take over.
+
+**The price left your range long ago — why is your grid still idling in place?**
+GridPilot pre-configures multiple non-overlapping ranges and activates whichever one the price walks into. After a stop-loss it even takes a "cooling-off period," waiting for a fresh stabilization signal before trailing in again.
+
+## 📊 Head-to-head against exchange-native grids
 
 | Dimension | Exchange-Native Grid | GridPilot |
 |------|----------------|-----------|
-| **Order placement** | Static batch orders that never move once placed | Automated chart-watching: on every market update it re-evaluates before dynamically placing/amending/canceling orders, and may have no open orders at any given moment |
-| **Fees** | No distinction between active and passive fills | Three-zone pricing: Maker orders in the POC zone (saves ~0.03%), licensed taker fills in the GTC zone to lock in excess profit, and order rejection in the circuit-breaker zone |
-| **Entry timing** | Opens a position immediately upon entering the range | Trailing entry: when the price enters the range it first trails the low, and only builds the position after confirming a rebound, avoiding opening at a high and getting stuck |
-| **Stop-loss** | Closes the entire position at a single price in one shot | Layered algorithmic-order buffer for staged reduction; if the price briefly breaks down then rebounds, the residual position benefits directly, saving the fees of rebuilding |
+| **Decision-making** | Static batch orders that never move once placed | Automated chart-watching: re-evaluates on every market update before dynamically placing/amending/canceling orders, and may have no open orders at any given moment |
+| **Execution quality** | Static orders only ever earn the grid-line price; the excess spread in a jump passes by | Chases best bid/ask for optimal positioning; takes liquidity when the spread exceeds 2× the taker fee to lock in excess profit; refuses orders outright at unfavorable prices |
+| **Entry timing** | Opens a position immediately upon entering the range | Trailing entry: trails the low and builds the position only after a confirmed rebound (0.2% by default) |
+| **Stop-loss** | One-shot market liquidation at a single price | Staged limit-order reduction in the buffer zone; the residual position benefits directly on a rebound; one backstop conditional order at the liquidation line |
 | **Market adaptation** | A fixed single range | Multiple non-overlapping ranges; whichever range the price enters becomes active while the rest stay dormant |
-
-1. **Observe-then-decide chart-watching mindset**: the system evaluates the relationship between the current price and the target price only when it receives new market data—if conditions are unfavorable it holds off and waits, and only when conditions are favorable does it position at the optimal price. When the price jumps sharply it can even capture extra spread beyond the grid step.
-2. **Maker-first / Taker-licensed / unfavorable circuit-breaker**: by default it places Post-Only Maker orders to capture lower fees; it only actively takes when the extra profit outweighs the taker cost and the opportunity is fleeting; when the current price is more expensive than the target buy price it rejects the order outright, avoiding buying high and selling low.
-3. **Trailing entry**: avoids getting stuck by opening at the top.
-4. **Layered algorithmic-order stop-loss**: preserves the ability to recover on a rebound.
-5. **Multi-segment price ranges**: wherever the price goes, the strategy follows.
 
 > See [`docs/INNOVATIONS.en.md`](docs/INNOVATIONS.en.md) for a point-by-point comparison against exchange-native grids; see [`docs/STRATEGY_SPEC.md`](docs/STRATEGY_SPEC.md) for the complete strategy rationale.
 
 ## ✨ Feature Overview
 
-- **Multi-segment price ranges**: pre-configure multiple non-overlapping ranges (e.g. 2000–2600, 2600–3200); whichever range the price enters becomes active
-- **Trailing entry**: trails the low and builds the position only after confirming a rebound
-- **Three-zone dynamic pricing**: Maker in the POC zone, locking excess profit in the GTC zone, order rejection in the circuit-breaker zone
-- **Layered stop-loss buffer**: multiple tiers of algorithmic conditional orders below the main grid for staged reduction
+- **State-agnostic self-healing**: target position = f(current price) — automatically re-converges after crashes, network drops, or manual position changes
 - **Real-time WebSocket push**: Ticker / fills / state-machine events synced to the frontend in real time
 - **Multi-exchange support**: a unified adapter interface compatible with Binance, Gate.io, and OKX
+- **AI box-configuration advice**: offline recommendations for ranges and parameters, never involved in live trading decisions
 - **Multilingual interface**: 12 built-in languages
 
 ## 💰 Understand the Fees, Save Money With an Invite Code at Sign-Up (sponsored by rebateto.me)

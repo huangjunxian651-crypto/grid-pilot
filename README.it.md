@@ -2,13 +2,9 @@
 
 > Piattaforma di trading a **griglia dinamica** per contratti perpetui ETH/USDT · compatibile con Binance / Gate.io / OKX
 
-**Trasforma la griglia statica degli exchange, quella da "piazza e dimentica", in un trader che monitora i grafici 24 ore su 24, 7 giorni su 7 — e che ridecide a ogni movimento di mercato.**
+**Il bot a griglia integrato negli exchange è un prodotto di un'epoca passata.**
 
-- 🧠 **Ordini con monitoraggio dinamico**: niente più piazzamenti statici di massa affidati alla fortuna — a ogni aggiornamento di mercato rivaluta prima di piazzare, modificare o annullare gli ordini, e cattura uno spread aggiuntivo oltre il passo della griglia quando il prezzo compie salti ampi
-- 💸 **Risparmia ~0,03% di commissioni a operazione**: di default piazza ordini Post-Only Maker per ottenere commissioni più basse; esegue attivamente solo quando il profitto aggiuntivo supera il costo dell'esecuzione attiva; rifiuta direttamente gli ordini a prezzi sfavorevoli
-- 🎯 **Apertura con trailing — mai aprire sul massimo**: quando il prezzo entra nell'intervallo insegue prima il minimo e costruisce la posizione solo dopo aver confermato il rimbalzo, evitando di restare incastrati subito dopo l'apertura
-- 🛡️ **Stop loss a livelli con effetto tampone**: quando il prezzo rompe brevemente al ribasso e poi rimbalza, la posizione residua ne beneficia direttamente — niente commissioni sprecate in una chiusura totale seguita da una ricostruzione
-- 🧭 **Segui automaticamente più intervalli**: preconfigura più intervalli non sovrapposti; si attiva quello in cui entra il prezzo
+Piazza una batteria di ordini sul book e non ci pensa più — apre senza guardare il prezzo, taglia tutto allo stop loss, e quando il mercato salta si accontenta del prezzo morto sulla linea della griglia. GridPilot è un trader che segue i grafici 24 ore su 24, 7 giorni su 7: **a ogni movimento di mercato ridecide se intervenire e a quale prezzo.**
 
 [简体中文](README.md) · [繁體中文](README.zh-TW.md) · [English](README.en.md) · [日本語](README.ja.md) · [Español](README.es.md) · [العربية](README.ar.md) · [Français](README.fr.md) · [Português](README.pt.md) · **Italiano** · [한국어](README.ko.md) · [ไทย](README.th.md) · [Tiếng Việt](README.vi.md)
 
@@ -30,34 +26,41 @@ Rispetto al "compra e mantieni": il "compra e mantieni" guadagna solo se alla fi
 
 > ⚠️ Il trading a griglia non garantisce profitti: in caso di ribasso unilaterale si subiscono comunque perdite latenti, e la leva amplifica il rischio. Comprendi la strategia prima di investire.
 
-## 🚀 Le nostre 5 grandi innovazioni rispetto alla griglia nativa degli exchange
+## 🤔 Prima di usare una griglia, fatti queste cinque domande
 
-I bot a griglia integrati negli exchange sono, in sostanza, un "piazzamento massivo di ordini una tantum, lasciati fermi, in attesa che il mercato li colpisca". La differenza fondamentale di GridPilot è **simulare via software un trader esperto che monitora il mercato**:
+**Il prezzo sta ancora scendendo — perché la griglia si affretta a riempire la posizione proprio sul massimo?**
+La griglia nativa apre appena il prezzo entra nell'intervallo. GridPilot usa l'**apertura con trailing**: segue prima il minimo ed entra solo dopo che un rimbalzo dello 0,2% conferma la tenuta — niente tentativi di indovinare il fondo, niente posizioni incastrate dal primo minuto.
+
+**Il mercato si muove ogni secondo — perché i tuoi ordini, una volta piazzati, non si muovono più?**
+GridPilot ridecide a ogni aggiornamento di mercato: annulla quando serve, modifica quando serve, e in qualsiasi istante sul book potrebbe non esserci alcun ordine. Quando il prezzo è sfavorevole rifiuta invece di inseguire; quando può eseguire come Maker (0,02%) non regala mai una commissione Taker (0,05%).
+
+**Il prezzo salta di 5–10 USDT in un colpo solo — la tua griglia sa fare altro oltre a stare a guardare?**
+Gli ordini statici possono incassare solo il prezzo morto sulla linea della griglia. Quando lo spread supera di 2 volte la commissione Taker, GridPilot esegue attivamente a mercato e si mette in tasca lo spread extra oltre il passo della griglia — e i test dimostrano che più l'order book di un exchange è "irregolare", maggiore è il rendimento in eccesso.
+
+**Una breve rottura al ribasso — perché liquidare l'intera posizione a mercato in un colpo solo?**
+La chiusura con un clic paga la commissione Taker *e* rinuncia al rimbalzo. GridPilot **riduce a scaglioni con ordini limite** nella zona tampone dello stop loss; se il prezzo rimbalza, la posizione residua continua a guadagnare. Solo quando viene violata la linea di liquidazione entra in gioco l'ultimo ordine condizionato di salvaguardia.
+
+**Il prezzo è uscito dall'intervallo da un pezzo — perché la tua griglia gira ancora a vuoto?**
+GridPilot preconfigura più intervalli non sovrapposti e attiva quello in cui entra il prezzo. Dopo uno stop loss osserva persino un "periodo di raffreddamento", aspettando un nuovo segnale di stabilizzazione prima di riprendere l'apertura con trailing.
+
+## 📊 Confronto diretto con la griglia nativa degli exchange
 
 | Dimensione | Griglia nativa dell'exchange | GridPilot |
 |------|----------------|-----------|
-| **Modalità di ordine** | Ordini statici massivi, immobili una volta piazzati | Monitoraggio automatizzato: a ogni aggiornamento di mercato rivaluta prima di piazzare/modificare/annullare ordini in modo dinamico; in qualsiasi istante potrebbe non esserci alcun ordine attivo |
-| **Commissioni** | Nessuna distinzione tra esecuzione attiva/passiva | Pricing a tre fasce: nella zona POC piazza ordini Maker (risparmio ~0,03%), nella zona GTC consente l'esecuzione attiva per bloccare il profitto in eccesso, nella zona circuit breaker rifiuta gli ordini |
-| **Tempistica di apertura** | Apre la posizione subito all'ingresso nell'intervallo | Apertura con trailing: all'ingresso nell'intervallo insegue prima il minimo, apre la posizione solo dopo aver confermato il rimbalzo, evitando di restare incastrati in alto subito dopo l'apertura |
-| **Stop loss** | Chiusura una tantum a un unico livello di prezzo | Riduzione tampone tramite ordini algoritmici a più livelli; se il prezzo rompe brevemente al ribasso e poi rimbalza, la posizione residua ne beneficia direttamente, risparmiando le commissioni di ricostruzione |
-| **Adattamento al mercato** | Un unico intervallo fisso | Più intervalli non sovrapposti: si attiva quello in cui entra il prezzo, gli altri restano in standby |
+| **Processo decisionale** | Ordini statici di massa, immobili una volta piazzati | Monitoraggio automatizzato: rivaluta a ogni aggiornamento di mercato prima di piazzare/modificare/annullare ordini in modo dinamico; in qualsiasi istante potrebbe non esserci alcun ordine attivo |
+| **Qualità di esecuzione** | Gli ordini statici incassano solo il prezzo sulla linea della griglia; lo spread extra di un salto passa oltre | Insegue bid/ask migliori per posizionarsi al prezzo ottimale; esegue attivamente quando lo spread supera 2× la commissione Taker per bloccare il profitto extra; rifiuta direttamente gli ordini a prezzi sfavorevoli |
+| **Tempistica di apertura** | Apre la posizione subito all'ingresso nell'intervallo | Apertura con trailing: segue il minimo e costruisce la posizione solo dopo un rimbalzo confermato dello 0,2% |
+| **Stop loss** | Liquidazione a mercato in un colpo solo a un unico prezzo | Riduzione a scaglioni con ordini limite nella zona tampone; la posizione residua beneficia direttamente del rimbalzo; un ordine condizionato di salvaguardia sulla linea di liquidazione |
+| **Adattamento al mercato** | Un unico intervallo fisso | Più intervalli non sovrapposti: si attiva quello in cui entra il prezzo, gli altri restano dormienti |
 
-1. **Mentalità da monitoraggio: prima osserva, poi decide**: il sistema valuta la relazione tra prezzo attuale e prezzo obiettivo solo quando riceve un aggiornamento di mercato — se le condizioni sono sfavorevoli si ferma e attende, se sono favorevoli si posiziona al prezzo migliore; in caso di salti di prezzo ampi può inoltre catturare uno spread aggiuntivo oltre il passo della griglia.
-2. **Maker prioritario / Taker concesso / circuit breaker sfavorevole**: di default piazza ordini Post-Only Maker per ottenere commissioni più basse; esegue attivamente (Taker) solo quando il profitto aggiuntivo supera il costo dell'esecuzione attiva e l'opportunità è fugace; quando il prezzo attuale è più caro del prezzo d'acquisto obiettivo rifiuta direttamente l'ordine, evitando di comprare alto e vendere basso.
-3. **Apertura con trailing**: evita di restare incastrati aprendo sul massimo.
-4. **Stop loss con ordini algoritmici a più livelli**: preserva la capacità di recupero al rimbalzo.
-5. **Più intervalli di prezzo**: dovunque vada il prezzo, la strategia lo segue.
-
-> Per il principio completo della strategia vedi [`docs/STRATEGY_SPEC.md`](docs/STRATEGY_SPEC.md).
+> Per il confronto punto per punto con le griglie native degli exchange vedi [`docs/INNOVATIONS.en.md`](docs/INNOVATIONS.en.md); per il principio completo della strategia vedi [`docs/STRATEGY_SPEC.md`](docs/STRATEGY_SPEC.md).
 
 ## ✨ Panoramica delle funzionalità
 
-- **Più intervalli di prezzo**: preconfigura più intervalli non sovrapposti (es. 2000–2600, 2600–3200), si attiva quello in cui entra il prezzo
-- **Apertura con trailing**: insegue il minimo e apre la posizione solo dopo aver confermato il rimbalzo
-- **Pricing dinamico a tre fasce**: Maker nella zona POC, blocco del profitto in eccesso nella zona GTC, rifiuto degli ordini nella zona circuit breaker
-- **Tampone di stop loss a più livelli**: ordini condizionati algoritmici a più scaglioni sotto la griglia principale per ridurre gradualmente la posizione
+- **Auto-riallineamento indipendente dallo stato**: posizione obiettivo = f(prezzo attuale) — dopo crash, disconnessioni o modifiche manuali alla posizione, al riavvio corregge automaticamente la deviazione
 - **Push WebSocket in tempo reale**: eventi Ticker / esecuzioni / macchina a stati sincronizzati in tempo reale verso il frontend
 - **Supporto multi-exchange**: interfaccia adapter unificata, compatibile con Binance, Gate.io, OKX
+- **Suggerimenti AI per la configurazione del box**: raccomandazioni offline di intervalli e parametri, senza intervenire nelle decisioni di trading in tempo reale
 - **Interfaccia multilingue**: 12 lingue integrate
 
 ## 💰 Capire le commissioni e risparmiare usando un codice invito alla registrazione (sponsor rebateto.me)
@@ -197,6 +200,7 @@ pnpm prisma studio         # Visualizza i dati
 
 | Documento | Descrizione |
 |------|------|
+| [`docs/INNOVATIONS.en.md`](docs/INNOVATIONS.en.md) | Spiegazione completa delle innovazioni principali (confronto punto per punto con la griglia nativa) |
 | [`docs/STRATEGY_SPEC.md`](docs/STRATEGY_SPEC.md) | Specifica completa della strategia (riferimento autorevole) |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Indice di mappatura dai componenti del codice ai capitoli della specifica |
 | [`docs/fees-and-funding.md`](docs/fees-and-funding.md) | Spiegazione di commissioni e funding |

@@ -2,13 +2,9 @@
 
 > Nền tảng giao dịch **lưới động (dynamic grid)** cho hợp đồng vĩnh cửu ETH/USDT · Tương thích Binance / Gate.io / OKX
 
-**Nâng cấp lưới tĩnh "đặt rồi mặc kệ" của sàn thành một trader theo bảng giá 24/7 — mỗi nhịp giá đều ra quyết định lại.**
+**Robot lưới có sẵn của sàn là sản phẩm của một thời đã qua.**
 
-- 🧠 **Đặt lệnh động theo bảng giá**: không còn đặt hàng loạt lệnh tĩnh rồi cầu may — mỗi lần giá cập nhật đều đánh giá lại trước khi đặt/sửa/hủy lệnh, và khi giá nhảy vọt mạnh còn bắt được phần chênh lệch vượt quá bước lưới
-- 💸 **Tiết kiệm ~0.03% phí mỗi giao dịch**: mặc định đặt lệnh Post-Only Maker để hưởng phí thấp hơn; chỉ ăn lệnh khi lợi nhuận tăng thêm bù được chi phí ăn lệnh; giá bất lợi thì từ chối lệnh thẳng
-- 🎯 **Vào lệnh theo dõi (trailing entry) — không mở vị thế ở đỉnh**: khi giá vào khoảng, bám đáy trước, xác nhận hồi phục rồi mới mở vị thế, tránh vừa vào lệnh đã bị kẹt
-- 🛡️ **Đệm cắt lỗ theo lớp**: khi giá rớt thủng tạm thời rồi hồi lại, phần vị thế còn lại hưởng lợi trực tiếp — không tốn phí đóng toàn bộ rồi tái lập
-- 🧭 **Tự động theo nhiều khoảng giá**: cấu hình sẵn nhiều khoảng không chồng lấn; giá vào khoảng nào thì kích hoạt khoảng đó
+Nó treo cả dàn lệnh lên sổ lệnh rồi mặc kệ — vào lệnh chẳng hỏi giá, cắt lỗ một nhát sạch sành sanh, giá nhảy gap thì chỉ ăn được cái giá chết ngay trên đường lưới. GridPilot là một trader túc trực bảng giá 24/7: **mỗi nhịp giá đập, nó lại đánh giá lại xem có nên ra tay không, và ra tay ở giá nào.**
 
 [简体中文](README.md) · [繁體中文](README.zh-TW.md) · [English](README.en.md) · [日本語](README.ja.md) · [Español](README.es.md) · [العربية](README.ar.md) · [Français](README.fr.md) · [Português](README.pt.md) · [Italiano](README.it.md) · [한국어](README.ko.md) · [ไทย](README.th.md) · **Tiếng Việt**
 
@@ -30,34 +26,41 @@ So với "mua và giữ": mua và giữ chỉ có lãi khi cuối cùng giá tă
 
 > ⚠️ Giao dịch lưới không phải lúc nào cũng có lãi: khi giá giảm một chiều vẫn sẽ lỗ tạm tính, và đòn bẩy sẽ khuếch đại rủi ro. Hãy hiểu rõ chiến lược trước khi xuống tiền.
 
-## 🚀 5 đổi mới lớn của chúng tôi so với lưới gốc của sàn
+## 🤔 Trước khi chơi lưới, hãy tự hỏi mình năm câu này
 
-Robot lưới có sẵn của sàn giao dịch về bản chất là "đặt hàng loạt lệnh một lần, treo đó bất động, chờ thị trường chạy tới khớp lệnh". Khác biệt cốt lõi của GridPilot là **dùng chương trình mô phỏng một trader giàu kinh nghiệm đang theo bảng giá**:
+**Giá vẫn đang rơi, sao lưới của bạn lại vội chất đầy vị thế ngay trên đỉnh?**
+Lưới gốc cứ giá bước vào khoảng là mở vị thế ngay. GridPilot **vào lệnh theo dõi (trailing entry)**: bám đáy trước, chờ hồi phục 0.2% xác nhận đã vững mới vào lệnh — không hứng dao rơi, không đứng đỉnh.
+
+**Thị trường đổi từng giây, sao lệnh của bạn treo lên rồi nằm im?**
+GridPilot ra quyết định lại mỗi lần giá cập nhật: cần hủy thì hủy, cần sửa thì sửa, có những thời điểm trên sổ lệnh chẳng có lệnh nào; giá bất lợi thà từ chối lệnh còn hơn đuổi giá, treo được Maker (0.02%) thì tuyệt đối không nộp phí Taker (0.05%) oan uổng.
+
+**Giá nhảy một phát 5–10 USDT, lưới của bạn ngoài đứng nhìn ra còn làm được gì?**
+Lệnh tĩnh chỉ ăn được cái giá chết trên đường lưới. GridPilot chủ động ăn lệnh thị trường khi chênh lệch vượt quá 2 lần phí Taker, khóa luôn phần chênh lệch vượt bước lưới vào túi — đo thực tế cho thấy sàn nào sổ lệnh càng "xù xì" thì lợi nhuận vượt mức càng cao.
+
+**Chỉ mới thủng nhẹ thoáng qua, sao phải xả toàn bộ vị thế bằng một lệnh thị trường?**
+Xả một nhát vừa tốn phí Taker, vừa đánh mất cú hồi. GridPilot **giảm vị thế từng nấc bằng lệnh giới hạn** trong vùng đệm cắt lỗ; giá hồi lại, phần vị thế còn lại tiếp tục kiếm tiền ngay. Chỉ khi thủng đường thanh lý, lệnh điều kiện chốt chặn cuối cùng mới tiếp quản một lần.
+
+**Giá chạy ra khỏi khoảng từ lâu, sao lưới của bạn vẫn quay không tại chỗ?**
+GridPilot cấu hình sẵn nhiều khoảng giá không chồng lấn, giá bước vào khoảng nào thì kích hoạt khoảng đó; sau khi cắt lỗ sẽ vào "thời gian nguội" (cooldown), đợi xuất hiện lại tín hiệu vững giá mới bắt đầu vào lệnh theo dõi lần nữa.
+
+## 📊 Đọ sức trực diện với lưới gốc của sàn
 
 | Khía cạnh | Lưới gốc của sàn | GridPilot |
 |------|----------------|-----------|
-| **Cách đặt lệnh** | Đặt lệnh tĩnh hàng loạt, treo xong không di chuyển | Tự động theo bảng giá: mỗi lần giá cập nhật đều đánh giá lại rồi mới đặt/sửa/hủy lệnh động, tại bất kỳ thời điểm nào cũng không nhất thiết có lệnh treo |
-| **Phí giao dịch** | Không phân biệt khớp chủ động/bị động | Định giá ba vùng: vùng POC đặt lệnh Maker (tiết kiệm ~0.03%), vùng GTC được phép ăn lệnh để khóa lợi nhuận vượt mức, vùng ngắt mạch (circuit breaker) từ chối đặt lệnh |
-| **Thời điểm vào lệnh** | Vào khoảng giá là mở vị thế ngay | Vào lệnh theo dõi (trailing entry): khi giá vào khoảng, bám đáy trước, xác nhận hồi phục rồi mới mở vị thế, tránh vừa mở đã đứng ở đỉnh bị kẹt |
-| **Cắt lỗ** | Đóng một lần tại một mức giá duy nhất | Giảm vị thế theo lớp bằng lệnh thuật toán đệm, khi giá rớt thủng tạm thời rồi hồi lại thì phần vị thế còn lại hưởng lợi trực tiếp, đỡ tốn phí tái lập |
-| **Thích ứng thị trường** | Một khoảng giá cố định | Nhiều khoảng giá không chồng lấn, giá vào khoảng nào thì kích hoạt khoảng đó, các khoảng còn lại ngủ đông |
+| **Cách ra quyết định** | Đặt lệnh tĩnh hàng loạt, treo xong không nhúc nhích | Tự động theo bảng giá: mỗi lần giá cập nhật đều đánh giá lại rồi mới đặt/sửa/hủy lệnh động, không phải lúc nào cũng có lệnh treo |
+| **Chất lượng khớp lệnh** | Lệnh tĩnh chỉ ăn được giá trên đường lưới, chênh lệch vượt mức khi giá nhảy vọt trôi qua trước mắt | Bám giá mua 1/bán 1 để chốt giá tối ưu; chênh lệch vượt 2× phí thì chủ động ăn lệnh khóa lợi nhuận vượt mức; giá bất lợi từ chối lệnh thẳng |
+| **Thời điểm vào lệnh** | Vào khoảng giá là mở vị thế ngay | Vào lệnh theo dõi: bám đáy, xác nhận hồi phục 0.2% mới mở vị thế |
+| **Cắt lỗ** | Xả toàn bộ bằng lệnh thị trường một lần tại một mức giá duy nhất | Vùng đệm cắt lỗ giảm vị thế từng nấc bằng lệnh giới hạn, giá hồi thì phần vị thế còn lại hưởng lợi trực tiếp; đường thanh lý giữ một lệnh điều kiện chốt chặn |
+| **Thích ứng thị trường** | Một khoảng giá cố định | Nhiều khoảng giá không chồng lấn, giá vào khoảng nào kích hoạt khoảng đó, các khoảng còn lại ngủ đông |
 
-1. **Tư duy theo bảng giá: quan sát trước, quyết định sau**: hệ thống mỗi khi nhận giá mới mới đánh giá quan hệ giữa giá hiện tại và giá mục tiêu — điều kiện bất lợi thì dừng tay quan sát, điều kiện thuận lợi mới đặt chỗ ở mức giá tối ưu; khi giá nhảy vọt mạnh còn có thể bắt được phần chênh lệch vượt quá bước lưới.
-2. **Maker ưu tiên / Taker đặc cách / Ngắt mạch khi bất lợi**: mặc định đặt lệnh Post-Only Maker để hưởng phí thấp hơn; chỉ khi lợi nhuận tăng thêm bù được chi phí ăn lệnh và cơ hội thoáng qua trong chớp mắt thì mới chủ động ăn lệnh; khi giá hiện tại đắt hơn giá mua mục tiêu thì từ chối lệnh thẳng, tránh mua cao bán thấp.
-3. **Vào lệnh theo dõi (trailing entry)**: tránh mở vị thế ở đỉnh rồi bị kẹt.
-4. **Cắt lỗ bằng lệnh thuật toán theo lớp**: giữ được khả năng phục hồi khi giá bật lại.
-5. **Nhiều khoảng giá**: giá đi đâu, chiến lược theo đó.
-
-> Nguyên lý chiến lược đầy đủ xem tại [`docs/STRATEGY_SPEC.md`](docs/STRATEGY_SPEC.md).
+> Giải thích đầy đủ từng đổi mới so với lưới của sàn xem tại [`docs/INNOVATIONS.en.md`](docs/INNOVATIONS.en.md); nguyên lý chiến lược đầy đủ xem tại [`docs/STRATEGY_SPEC.md`](docs/STRATEGY_SPEC.md).
 
 ## ✨ Tổng quan tính năng
 
-- **Nhiều khoảng giá**: cấu hình sẵn nhiều khoảng không chồng lấn (ví dụ 2000–2600, 2600–3200), giá vào khoảng nào kích hoạt khoảng đó
-- **Vào lệnh theo dõi**: bám đáy xác nhận hồi phục rồi mới mở vị thế
-- **Định giá động ba vùng**: vùng POC dùng Maker, vùng GTC khóa lợi nhuận vượt mức, vùng ngắt mạch từ chối lệnh
-- **Đệm cắt lỗ theo lớp**: nhiều bậc lệnh điều kiện thuật toán giảm vị thế theo lớp bên dưới lưới chính
+- **Tự lành không phụ thuộc trạng thái**: vị thế mục tiêu = f(giá hiện tại), sau sập / mất mạng / tự tay đổi vị thế, khởi động lại tự động chỉnh về đúng
 - **Đẩy dữ liệu WebSocket thời gian thực**: sự kiện Ticker / khớp lệnh / máy trạng thái đồng bộ thời gian thực lên frontend
 - **Hỗ trợ đa sàn**: giao diện adapter thống nhất, tương thích Binance, Gate.io, OKX
+- **AI gợi ý cấu hình khung giá**: đề xuất khoảng giá và tham số ngoại tuyến, không can thiệp quyết định giao dịch thời gian thực
 - **Giao diện đa ngôn ngữ**: tích hợp sẵn 12 ngôn ngữ
 
 ## 💰 Hiểu rõ phí, dùng mã mời để tiết kiệm khi đăng ký (nhà tài trợ rebateto.me)
@@ -197,6 +200,7 @@ pnpm prisma studio         # xem dữ liệu
 
 | Tài liệu | Diễn giải |
 |------|------|
+| [`docs/INNOVATIONS.en.md`](docs/INNOVATIONS.en.md) | Giải thích đầy đủ các đổi mới cốt lõi (so sánh từng điểm với lưới gốc của sàn) |
 | [`docs/STRATEGY_SPEC.md`](docs/STRATEGY_SPEC.md) | Tài liệu đặc tả chiến lược đầy đủ (tham chiếu chuẩn) |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Chỉ mục ánh xạ từ thành phần mã nguồn tới chương đặc tả |
 | [`docs/fees-and-funding.md`](docs/fees-and-funding.md) | Giải thích phí giao dịch và phí vốn (funding) |

@@ -45,7 +45,7 @@
 
 ## 2. Maker 优先 / Taker 特许 / 不利熔断：三区间动态定价
 
-**交易所网格的缺陷**：不区分主动/被动成交，常以 Taker 身份吃单。而在杠杆与高频网格下，手续费是最大的隐性成本——Taker（≈0.05%）几乎吃尽网格步长（≈0.1%）的利润。
+**要解决的问题**：在杠杆与高频网格下，手续费是最大的隐性成本（Maker ≈0.02% vs Taker ≈0.05%）。每一笔成交都必须回答三个问题：能不能以 Maker 成交？值不值得主动吃单？价位不利时该不该停手？
 
 **我们的做法**：每次下单按「当前价 vs 网格目标价」的偏离度，动态选择三种方式之一。
 
@@ -55,7 +55,7 @@
 | **POC 区** | 偏离 < 阈值 | Post-Only 挂在买一/卖一价 | **0.02%（Maker）** | 默认首选，以 Maker 身份卡位 |
 | **GTC 区** | 偏离 ≥ 阈值 | 市价吃单 | 0.05%（Taker） | 额外价差 > 多付的 0.03%，划算 |
 
-**期望值证明（为什么坚持 Maker）**：以 Gate.io 为例（Maker 0.02% / Taker 0.05% / 步长≈0.1%）：
+**为什么坚持 Post-Only 等待，而不是直接市价成交**：以 Gate.io 为例（Maker 0.02% / Taker 0.05% / 步长≈0.1%）：
 
 ```
 Taker 双侧成交（100% 填单）：净利润 = 0.1% − 0.05%×2 = 0%      ← 手续费吃尽步长利润
@@ -63,11 +63,11 @@ Maker 双侧成交（设 50% 循环完成率）：每轮 0.1% − 0.02%×2 = 0.0
                                    期望 = 50% × 0.06% = 0.03% > 0%
 ```
 
-> **结论**：只要循环完成概率 > 0，Maker 的期望利润就高于 Taker——因为 Taker 每轮净利润本已为零，任何 Maker 成交都是净增益。
+> **结论**：只要循环完成概率 > 0，Maker 的期望利润就高于 Taker——因为 Taker 每轮净利润本已为零，任何 Maker 成交都是净增益。而在流动性充足的合约市场，挂在买一/卖一的 Post-Only 单通常 1-2 秒内就会成交（详见 STRATEGY_SPEC §7.7），等待的代价远低于直觉估计。
 
 **GTC 的经济模型**：GTC 阈值默认 0.1%，= `ExcessProfitMultiplier(2.0) × takerFee(0.05%)`，约为「划算最小阈值」(takerFee − makerFee = 0.03%) 的 3.3 倍，保守留足余量。只有当额外价差利润确实超过多付的手续费，才特许吃单。
 
-**价值**：默认每笔约省 0.03% 手续费；只在真正划算时才主动吃单锁定超额利润；不利时一分不花。Maker 负责低成本常规成交、GTC 负责大偏差超额利润，两者互补覆盖全部有利场景。
+**价值**：常规成交以 Maker 低成本完成；只有额外价差确实盖过多付的手续费时才主动吃单锁定超额利润；价位不利时一分不花。Maker 负责低成本常规成交、GTC 负责大偏差超额利润、熔断区负责不利时停手，三者互补覆盖全部场景。
 
 ---
 
@@ -190,7 +190,7 @@ SHORT: d = price − takeProfitPrice
 | 维度 | 交易所原生网格 | GridPilot |
 |------|----------------|-----------|
 | **下单思维** | 批量静态挂单，挂上不动等撞单 | 事件驱动盯盘，先观察再决策，任意时刻不一定有挂单 |
-| **手续费** | 不分主被动，常吃单 | 三区间定价：POC 省 Maker 费 / GTC 锁超额 / 熔断拒单 |
+| **成交质量** | 静态单只能吃到网格线价格，跳跃行情的超额价差擦肩而过 | 三区间定价：POC 挂 Maker 低成本成交 / GTC 锁超额价差 / 熔断拒单 |
 | **下单价** | 固定网格理论价 | 追逐买一/卖一价，追踪改单保持最优竞价 |
 | **建仓时机** | 进区间立即开仓 | 追踪建仓确认反弹，避免顶部被套 |
 | **行情适应** | 固定单一区间 | 多段不重叠区间，价格进哪段激活哪段 |
@@ -208,7 +208,7 @@ SHORT: d = price − takeProfitPrice
 Exchange-native grid bots are essentially *"place all orders at once, leave them static, wait to be hit."* GridPilot instead **emulates an experienced live trader in software** — continuously observing the market and deciding, on every tick, whether and how to place/amend/cancel orders. Key innovations:
 
 1. **Observe-then-decide** — event-driven; not always resting orders on the book.
-2. **Maker-first / Taker-when-worth-it / circuit-break** three-zone pricing — saves ~0.03%/fill; Maker's expected profit beats Taker because Taker's per-cycle net is ~0.
+2. **Maker-first / Taker-when-worth-it / circuit-break** three-zone pricing — any Maker fill is pure incremental gain over a zero-net Taker cycle; takes only when the extra spread covers the additional fee.
 3. **Chase ordering** — quotes at best bid/ask, re-pegs to stay top-of-book, serialized execution.
 4. **Trailing entry** — doesn't predict the bottom; confirms a rebound before entering, avoiding buying the top.
 5. **Multi-zone ranges** — multiple non-overlapping boxes; one activates wherever price goes.

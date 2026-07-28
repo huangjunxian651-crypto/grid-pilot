@@ -2,13 +2,9 @@
 
 > Plateforme de trading par **grille dynamique** sur contrats perpétuels ETH/USDT · Compatible Binance / Gate.io / OKX
 
-**Transforme la grille statique « posez et oubliez » des exchanges en un trader qui surveille les marchés 24 h/24, 7 j/7 — et qui redécide à chaque tick.**
+**Le robot de grille intégré aux exchanges appartient à une autre époque.**
 
-- 🧠 **Ordres pilotés par la surveillance** : fini le lot d'ordres statiques posés en croisant les doigts — à chaque mise à jour du marché, le système réévalue avant de passer, modifier ou annuler un ordre, et lorsque le prix fait un grand bond, il capture même un écart supplémentaire au-delà du pas de la grille
-- 💸 **~0,03 % de frais économisés par transaction** : des ordres Maker Post-Only par défaut pour profiter des frais réduits ; exécution en taker uniquement lorsque le surprofit dépasse le coût du taker ; refus pur et simple de l'ordre lorsque le prix est défavorable
-- 🎯 **Ouverture par suivi — jamais au sommet** : à l'entrée du prix dans la fourchette, on suit d'abord le point bas et on n'ouvre la position qu'après confirmation du rebond, pour éviter de se retrouver coincé dès l'entrée
-- 🛡️ **Stop-loss à tampon en couches** : en cas de cassure brève suivie d'un rebond, la position résiduelle en bénéficie directement — pas de frais gaspillés à liquider entièrement puis reconstruire
-- 🧭 **Suivi automatique multi-fourchettes** : préconfigurez plusieurs fourchettes non chevauchantes ; celle dans laquelle entre le prix devient active
+Il pose un paquet d'ordres sur le carnet et ne s'en occupe plus jamais — il ouvre ses positions sans regarder le prix, liquide tout d'un seul coup au stop-loss, et quand le marché fait un bond, il n'encaisse que les prix figés de ses lignes de grille. GridPilot, c'est un trader qui surveille le marché 24 h/24, 7 j/7 : **à chaque tick, il rejuge s'il faut agir, et à quel prix.**
 
 [简体中文](README.md) · [繁體中文](README.zh-TW.md) · [English](README.en.md) · [日本語](README.ja.md) · [Español](README.es.md) · [العربية](README.ar.md) · **Français** · [Português](README.pt.md) · [Italiano](README.it.md) · [한국어](README.ko.md) · [ไทย](README.th.md) · [Tiếng Việt](README.vi.md)
 
@@ -30,34 +26,41 @@ Comparé au « buy and hold » : la stratégie d'achat-conservation ne génère 
 
 > ⚠️ Le trading par grille n'est pas un gain garanti : en cas de baisse unilatérale, il subit toujours des pertes latentes, et l'effet de levier amplifie le risque. Comprenez d'abord la stratégie avant d'investir.
 
-## 🚀 Nos 5 innovations majeures par rapport aux grilles natives des exchanges
+## 🤔 Avant d'utiliser une grille, posez-vous d'abord ces cinq questions
 
-Le robot de grille intégré aux exchanges consiste essentiellement à « poser une fois un lot d'ordres statiques, les laisser immobiles, et attendre que le marché vienne les percuter ». La différence fondamentale de GridPilot, c'est qu'il **simule par programme un trader expérimenté qui surveille les marchés** :
+**Le prix chute encore — pourquoi votre grille s'empresse-t-elle de remplir la position au sommet ?**
+La grille native ouvre une position dès que le prix entre dans la fourchette. GridPilot pratique l'**ouverture par suivi** : il accompagne d'abord le point bas et n'entre qu'une fois le rebond de 0,2 % confirmé — ni achat du creux à l'aveugle, ni position coincée en haut.
+
+**Le marché bouge à chaque seconde — pourquoi vos ordres restent-ils figés une fois posés ?**
+GridPilot redécide à chaque mise à jour du marché : il annule ce qui doit l'être, modifie ce qui doit l'être, et à tout instant le carnet peut ne contenir aucun ordre. Quand le prix est défavorable, il préfère refuser l'ordre plutôt que courir après le cours ; s'il peut passer en Maker (0,02 %), il ne paiera jamais le Taker (0,05 %) pour rien.
+
+**Le prix bondit de 5–10 USDT d'un coup — à part regarder, que peut faire votre grille ?**
+Les ordres statiques n'encaissent que les prix figés des lignes de grille. Quand l'écart dépasse 2 fois les frais taker, GridPilot exécute activement au marché et empoche l'écart de saut au-delà du pas de grille — et les tests le montrent : plus le carnet d'un exchange est « rugueux », plus le surprofit est élevé.
+
+**Une simple cassure éclair — pourquoi liquider toute la position d'un seul coup au marché ?**
+Tout clôturer en un clic, c'est payer les frais Taker et renoncer au rebond. GridPilot **réduit la position palier par palier en ordres limites** dans la zone tampon du stop-loss ; si le prix rebondit, la position résiduelle continue directement de gagner. Ce n'est qu'en franchissant la ligne de liquidation qu'un dernier ordre conditionnel de secours prend le relais en une fois.
+
+**Le prix a depuis longtemps quitté la fourchette — pourquoi votre grille tourne-t-elle encore à vide ?**
+GridPilot préconfigure plusieurs fourchettes non chevauchantes : celle dans laquelle entre le prix s'active ; après un stop-loss, il entre en « période de refroidissement » et ne reprend le suivi d'ouverture que lorsqu'un signal de stabilisation réapparaît.
+
+## 📊 Comparaison frontale avec la grille native des exchanges
 
 | Dimension | Grille native de l'exchange | GridPilot |
 |------|----------------|-----------|
-| **Mode de passage d'ordre** | Ordres statiques posés par lots, immobiles une fois placés | Surveillance automatisée : à chaque mise à jour du marché, réévaluation avant d'agir, puis passage/modification/annulation dynamique d'ordres ; à tout instant, il n'y a pas nécessairement d'ordre en attente |
-| **Frais** | Aucune distinction entre exécution active et passive | Tarification à trois zones : zone POC en ordre Maker (économie d'~0,03 %), zone GTC en taker autorisé pour verrouiller le surprofit, zone coupe-circuit refusant l'ordre |
-| **Moment d'ouverture de position** | Ouverture immédiate à l'entrée dans la fourchette | Ouverture par suivi : à l'entrée dans la fourchette, on suit d'abord le point bas, et on n'ouvre la position qu'après confirmation du rebond, évitant de se retrouver coincé en haut dès l'ouverture |
-| **Stop-loss** | Liquidation unique à un seul niveau de prix | Réduction de position en couches via ordres algorithmiques tampons : en cas de cassure brève suivie d'un rebond, la position résiduelle en bénéficie directement, économisant les frais de reconstruction |
-| **Adaptation au marché** | Fourchette unique fixe | Plusieurs fourchettes non chevauchantes : c'est la fourchette dans laquelle entre le prix qui s'active, les autres restent en veille |
+| **Mode de décision** | Ordres statiques posés par lots, qui ne bougent plus une fois placés | Surveillance automatisée : à chaque mise à jour du marché, nouvelle évaluation avant de passer/modifier/annuler dynamiquement un ordre ; à tout instant, il peut n'y avoir aucun ordre en attente |
+| **Qualité d'exécution** | Les ordres statiques n'encaissent que le prix des lignes de grille ; le surprofit des sauts de prix passe à côté | Se cale sur le meilleur bid/ask ; quand l'écart dépasse 2× les frais, exécute activement en taker pour verrouiller le surprofit ; refuse l'ordre quand le prix est défavorable |
+| **Moment d'ouverture** | Ouverture immédiate à l'entrée dans la fourchette | Ouverture par suivi : accompagne le point bas et n'ouvre qu'après confirmation d'un rebond de 0,2 % |
+| **Stop-loss** | Liquidation totale au marché en une seule fois à un seul prix | Réduction palier par palier en ordres limites dans la zone tampon ; en cas de rebond, la position résiduelle en profite directement ; un ordre conditionnel de secours reste en veille sur la ligne de liquidation |
+| **Adaptation au marché** | Fourchette unique fixe | Plusieurs fourchettes non chevauchantes : celle dans laquelle entre le prix s'active, les autres restent en veille |
 
-1. **Une logique de surveillance : observer d'abord, décider ensuite** : le système ne juge la relation entre le prix actuel et le prix cible qu'à chaque réception du marché — si les conditions sont défavorables, il s'abstient et observe ; ce n'est que si les conditions sont favorables qu'il se positionne au meilleur prix, et lorsque le prix fait un grand bond, il peut même capturer un écart supplémentaire dépassant le pas de la grille.
-2. **Maker prioritaire / Taker autorisé / coupe-circuit défavorable** : par défaut, des ordres Maker Post-Only sont placés pour bénéficier de frais plus bas ; ce n'est que lorsque le profit supplémentaire dépasse le coût du taker et que l'opportunité est fugace qu'il prend l'initiative d'exécuter en taker ; lorsque le prix actuel est plus cher que le prix d'achat cible, l'ordre est directement refusé pour éviter d'acheter haut et de vendre bas.
-3. **Ouverture par suivi** : éviter de rester coincé après une ouverture au sommet.
-4. **Stop-loss algorithmique en couches** : préserver la capacité de récupération en cas de rebond.
-5. **Plusieurs fourchettes de prix** : où que le prix aille, la stratégie le suit.
-
-> Voir le principe complet de la stratégie dans [`docs/STRATEGY_SPEC.md`](docs/STRATEGY_SPEC.md).
+> Voir [`docs/INNOVATIONS.en.md`](docs/INNOVATIONS.en.md) pour la comparaison point par point avec les grilles des exchanges ; voir [`docs/STRATEGY_SPEC.md`](docs/STRATEGY_SPEC.md) pour le principe complet de la stratégie.
 
 ## ✨ Aperçu des fonctionnalités
 
-- **Plusieurs fourchettes de prix** : préconfigurez plusieurs fourchettes non chevauchantes (par ex. 2000–2600, 2600–3200) ; c'est la fourchette dans laquelle entre le prix qui s'active
-- **Ouverture par suivi** : suivre le point bas et n'ouvrir la position qu'après confirmation du rebond
-- **Tarification dynamique à trois zones** : Maker en zone POC, verrouillage du surprofit en zone GTC, refus d'ordre en zone coupe-circuit
-- **Tampon de stop-loss en couches** : ordres conditionnels algorithmiques sur plusieurs paliers sous la grille principale, réduisant la position par couches
+- **Auto-réparation sans état** : position cible = f(prix actuel) ; après un crash, une coupure réseau ou une modification manuelle de la position, le redémarrage corrige automatiquement l'écart
 - **Diffusion WebSocket en temps réel** : Ticker / exécutions / événements de la machine à états synchronisés en temps réel avec le frontend
 - **Support multi-exchanges** : interface d'adaptateur unifiée, compatible Binance, Gate.io, OKX
+- **Suggestions de configuration de la fourchette par IA** : recommandations hors ligne de fourchettes et de paramètres, sans intervenir dans les décisions de trading en temps réel
 - **Interface multilingue** : 12 langues intégrées
 
 ## 💰 Comprendre les frais et économiser à l'inscription avec un code de parrainage (sponsor rebateto.me)
@@ -197,6 +200,7 @@ pnpm prisma studio         # visualise les données
 
 | Document | Description |
 |------|------|
+| [`docs/INNOVATIONS.en.md`](docs/INNOVATIONS.en.md) | Explication complète des innovations clés (comparaison point par point avec la grille native) |
 | [`docs/STRATEGY_SPEC.md`](docs/STRATEGY_SPEC.md) | Spécification complète de la stratégie (référence faisant autorité) |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Index de correspondance entre les composants de code et les chapitres de la spécification |
 | [`docs/fees-and-funding.md`](docs/fees-and-funding.md) | Explication des frais et des frais de financement |

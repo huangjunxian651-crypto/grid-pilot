@@ -45,7 +45,7 @@ As a result, **GridPilot does not necessarily have any grid order resting at any
 
 ## 2. Maker-first / Taker-when-licensed / adverse circuit-break: three-zone dynamic pricing
 
-**Flaw of exchange grids**: They don't distinguish active from passive fills and often take liquidity as a Taker. But with leverage and high-frequency grids, fees are the largest hidden cost — a Taker fee (≈0.05%) nearly eats up the entire profit of a grid step (≈0.1%).
+**The problem to solve**: With leverage and high-frequency grids, fees are the largest hidden cost (Maker ≈0.02% vs. Taker ≈0.05%). Every fill must answer three questions: can it execute as a Maker? Is it worth actively taking? And should we stand down at an unfavorable price?
 
 **What we do**: For each order, we dynamically pick one of three methods based on the deviation of "current price vs. grid target price."
 
@@ -55,7 +55,7 @@ As a result, **GridPilot does not necessarily have any grid order resting at any
 | **POC zone** | Deviation < threshold | Post-Only resting at best bid/ask | **0.02% (Maker)** | Default preference; hold position as a Maker |
 | **GTC zone** | Deviation ≥ threshold | Market-take | 0.05% (Taker) | Extra spread > the additional 0.03% paid, so it's worth it |
 
-**Expected-value proof (why we insist on Maker)**: Take Gate.io as an example (Maker 0.02% / Taker 0.05% / step ≈0.1%):
+**Why we insist on Post-Only patience instead of taking at market**: Take Gate.io as an example (Maker 0.02% / Taker 0.05% / step ≈0.1%):
 
 ```
 Taker fills both sides (100% fill rate): net profit = 0.1% − 0.05%×2 = 0%      ← fees eat the entire step profit
@@ -63,11 +63,11 @@ Maker fills both sides (assume 50% cycle completion rate): 0.1% − 0.02%×2 = 0
                                    expected value = 50% × 0.06% = 0.03% > 0%
 ```
 
-> **Conclusion**: As long as the cycle-completion probability is > 0, Maker's expected profit beats Taker's — because Taker's per-cycle net profit is already zero, so any Maker fill is pure incremental gain.
+> **Conclusion**: As long as the cycle-completion probability is > 0, Maker's expected profit beats Taker's — because Taker's per-cycle net profit is already zero, so any Maker fill is pure incremental gain. And in a liquid perpetuals market, a Post-Only order resting at best bid/ask typically fills within 1-2 seconds (see STRATEGY_SPEC §7.7) — the cost of waiting is far lower than intuition suggests.
 
 **The economic model of GTC**: The GTC threshold defaults to 0.1%, which equals `ExcessProfitMultiplier(2.0) × takerFee(0.05%)`, roughly 3.3× the "worthwhile minimum threshold" (takerFee − makerFee = 0.03%), leaving a conservative margin. Only when the extra spread profit truly exceeds the additional fee paid do we license a take.
 
-**Value**: By default each fill saves about 0.03% in fees; we only actively take to lock in excess profit when it's genuinely worth it; and we spend nothing when conditions are unfavorable. Maker handles low-cost routine fills while GTC handles excess profit on large deviations — the two complement each other to cover every favorable scenario.
+**Value**: Routine fills execute at low Maker cost; we only actively take to lock in excess profit when the extra spread genuinely covers the additional fee; and we spend nothing when conditions are unfavorable. Maker handles low-cost routine fills, GTC handles excess profit on large deviations, and the circuit-break zone handles standing down — the three complement each other to cover every scenario.
 
 ---
 
@@ -190,7 +190,7 @@ amount to operate = target position − exchange's latest actual position     �
 | Dimension | Exchange-native grid | GridPilot |
 |------|----------------|-----------|
 | **Ordering mindset** | Batch static orders, leave them static and wait to be hit | Event-driven watching; observe before deciding; not necessarily any resting order at a given moment |
-| **Fees** | Doesn't distinguish active/passive, often takes | Three-zone pricing: POC saves the Maker fee / GTC locks excess / circuit-break refuses |
+| **Execution quality** | Static orders only ever earn the grid-line price; the excess spread in a jump passes by | Three-zone pricing: POC fills as low-cost Maker / GTC locks excess spread / circuit-break refuses |
 | **Order price** | Fixed theoretical grid price | Chases best bid/ask, amends to keep the best quote |
 | **Entry timing** | Open immediately on entering the range | Trailing entry confirms a rebound, avoiding getting stuck at the top |
 | **Market adaptation** | Fixed single range | Multiple non-overlapping ranges; activate whichever segment the price enters |

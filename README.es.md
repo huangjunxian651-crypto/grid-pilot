@@ -2,13 +2,9 @@
 
 > Plataforma de trading de **cuadrícula dinámica** para contratos perpetuos ETH/USDT · Compatible con Binance / Gate.io / OKX
 
-**Convierte la cuadrícula estática del exchange, de esas que "se colocan y se olvidan", en un trader que vigila el mercado 24/7, volviendo a decidir en cada tick.**
+**El bot de cuadrícula que trae el exchange es un producto de otra era.**
 
-- 🧠 **Órdenes con vigilancia dinámica del mercado**: nada de colocar un lote de órdenes una sola vez y cruzar los dedos — reevalúa en cada actualización del mercado antes de colocar, modificar o cancelar órdenes, y captura un diferencial adicional que supera el paso de la cuadrícula cuando el precio da saltos bruscos
-- 💸 **Ahorra ~0,03 % en comisiones por operación**: por defecto coloca órdenes Maker Post-Only para aprovechar tarifas más bajas; solo ejecuta como Taker cuando la ganancia adicional supera el coste de ser Taker, y rechaza directamente las órdenes a precios desfavorables
-- 🎯 **Apertura por seguimiento, sin abrir en el techo**: cuando el precio entra en el rango, primero persigue el punto bajo y solo abre posición tras confirmar el rebote, evitando quedar atrapado nada más abrir
-- 🛡️ **Amortiguador de stop-loss por niveles**: cuando el precio rompe brevemente a la baja y luego rebota, la posición residual se beneficia directamente — sin gastar comisiones en un cierre total y una reconstrucción
-- 🧭 **Seguimiento automático de múltiples rangos**: preconfigura varios rangos no superpuestos; se activa el rango en el que entra el precio
+Cuelga un montón de órdenes en el libro y se desentiende: abre posición sin mirar el precio, corta el stop-loss de un tajo y, cuando el mercado da un salto, solo captura los precios muertos de las líneas de cuadrícula. GridPilot es un trader que vigila el mercado 24/7: **con cada tick vuelve a decidir si actuar y a qué precio.**
 
 [简体中文](README.md) · [繁體中文](README.zh-TW.md) · [English](README.en.md) · [日本語](README.ja.md) · **Español** · [العربية](README.ar.md) · [Français](README.fr.md) · [Português](README.pt.md) · [Italiano](README.it.md) · [한국어](README.ko.md) · [ไทย](README.th.md) · [Tiếng Việt](README.vi.md)
 
@@ -30,34 +26,41 @@ Comparado con "comprar y mantener": comprar y mantener solo genera ganancias cua
 
 > ⚠️ El trading de cuadrícula no garantiza ganancias: durante una caída unidireccional puede haber pérdidas no realizadas, y el apalancamiento amplifica el riesgo. Comprende bien la estrategia antes de invertir.
 
-## 🚀 Nuestras 5 grandes innovaciones frente a la cuadrícula nativa de los exchanges
+## 🤔 Antes de usar una cuadrícula, hazte estas cinco preguntas
 
-Los bots de cuadrícula integrados en los exchanges son, en esencia, "colocar un lote de órdenes una sola vez, dejarlas fijas y esperar a que el mercado las ejecute". La diferencia central de GridPilot es **simular mediante software a un trader experimentado que vigila el mercado**:
+**El precio sigue cayendo: ¿por qué tu cuadrícula tiene tanta prisa por llenar la posición en plena cima?**
+La cuadrícula nativa abre posición en cuanto el precio entra en el rango. GridPilot **abre por seguimiento**: primero persigue el punto bajo y solo entra tras confirmar un rebote del 0,2 % — ni compra la caída a ciegas ni se queda colgado arriba.
+
+**El mercado cambia cada segundo: ¿por qué tus órdenes no se mueven una vez colocadas?**
+GridPilot vuelve a decidir con cada actualización del mercado: cancela lo que hay que cancelar, modifica lo que hay que modificar, y en cualquier momento puede no haber ni una sola orden en el libro; si el precio no conviene, prefiere rechazar la orden antes que perseguir el precio — si puede ser Maker (0,02 %), jamás regala el Taker (0,05 %).
+
+**El precio salta 5–10 USDT de golpe: ¿tu cuadrícula se queda mirando o hace algo?**
+Las órdenes estáticas solo capturan los precios muertos de las líneas de cuadrícula. Cuando el diferencial supera 2 veces la comisión Taker, GridPilot ejecuta activamente a mercado y se embolsa el diferencial del salto que excede el paso de la cuadrícula — las pruebas demuestran que cuanto más "irregular" es el libro de órdenes de un exchange, mayor es la ganancia extra.
+
+**Es solo una ruptura breve a la baja: ¿por qué liquidar toda la posición de golpe a mercado?**
+Un cierre total de un clic paga comisión Taker y, encima, renuncia al rebote. GridPilot **reduce la posición nivel a nivel con órdenes límite** dentro de la zona de amortiguación del stop-loss; si el precio rebota, la posición residual sigue ganando directamente. Solo cuando se rompe la línea de liquidación, la última orden condicional de respaldo toma el control de una vez.
+
+**El precio se salió del rango hace rato: ¿por qué tu cuadrícula sigue girando en vacío?**
+GridPilot preconfigura varios rangos que no se superponen: se activa el rango en el que entra el precio; tras un stop-loss entra en un "periodo de enfriamiento" y solo vuelve a abrir por seguimiento cuando reaparece una señal de estabilización.
+
+## 📊 Cara a cara con la cuadrícula nativa del exchange
 
 | Dimensión | Cuadrícula nativa del exchange | GridPilot |
 |------|----------------|-----------|
-| **Forma de operar** | Órdenes estáticas en lote, sin moverse una vez colocadas | Vigilancia automatizada: en cada actualización del mercado reevalúa antes de actuar, colocando/modificando/cancelando órdenes dinámicamente; en cualquier momento puede no haber órdenes colgadas |
-| **Comisiones** | No distingue entre ejecución activa y pasiva | Precios en tres rangos: en la zona POC coloca órdenes Maker (ahorra ~0,03 %), en la zona GTC se permite ejecutar como Taker para asegurar ganancias adicionales, y en la zona de cortocircuito rechaza órdenes |
-| **Momento de apertura** | Abre posición de inmediato al entrar en el rango | Apertura por seguimiento: al entrar en el rango primero persigue el punto bajo y solo abre posición tras confirmar el rebote, evitando quedar atrapado en una posición alta nada más abrir |
-| **Stop-loss** | Cierre único en un solo precio | Reducción escalonada con órdenes algorítmicas como amortiguador; si el precio rompe brevemente a la baja y luego rebota, la posición residual se beneficia directamente y se ahorra la comisión de reconstrucción |
-| **Adaptación al mercado** | Rango único fijo | Múltiples rangos no superpuestos: se activa el rango en el que entra el precio y los demás quedan inactivos |
+| **Forma de decidir** | Órdenes estáticas en lote, inmóviles una vez colocadas | Vigilancia automatizada: reevalúa con cada actualización del mercado antes de colocar/modificar/cancelar dinámicamente; en cualquier momento puede no haber órdenes colgadas |
+| **Calidad de ejecución** | Las órdenes estáticas solo capturan el precio de las líneas de cuadrícula; el diferencial extra de los saltos se escapa | Persigue el mejor bid/ask para clavar el mejor precio; cuando el diferencial supera 2× la comisión, ejecuta activamente para bloquear la ganancia extra; si el precio no conviene, rechaza la orden |
+| **Momento de apertura** | Abre posición en cuanto entra en el rango | Apertura por seguimiento: persigue el punto bajo y solo abre tras confirmar un rebote del 0,2 % |
+| **Stop-loss** | Cierre total a mercado en un solo precio | Reducción nivel a nivel con órdenes límite en la zona de amortiguación; si rebota, la posición residual se beneficia directamente; la línea de liquidación guarda una orden condicional de respaldo |
+| **Adaptación al mercado** | Un único rango fijo | Varios rangos no superpuestos: se activa el rango en el que entra el precio y los demás quedan inactivos |
 
-1. **Mentalidad de vigilar primero y decidir después**: el sistema evalúa la relación entre el precio actual y el precio objetivo cada vez que recibe datos de mercado; si las condiciones son desfavorables, se detiene y observa, y solo cuando son favorables se posiciona al mejor precio; ante saltos bruscos de precio puede incluso capturar un diferencial adicional que supera el paso de la cuadrícula.
-2. **Maker prioritario / Taker permitido / cortocircuito desfavorable**: por defecto coloca órdenes Maker Post-Only para aprovechar tarifas más bajas; solo ejecuta como Taker de forma activa cuando la ganancia adicional supera el coste de ser Taker y la oportunidad es fugaz; cuando el precio actual es más caro que el precio de compra objetivo, rechaza la orden directamente para evitar comprar caro y vender barato.
-3. **Apertura por seguimiento**: evita abrir en el techo y quedar atrapado.
-4. **Stop-loss con órdenes algorítmicas escalonadas**: conserva la capacidad de recuperación tras un rebote.
-5. **Múltiples rangos de precio**: a donde vaya el precio, allí va la estrategia.
-
-> Consulta el principio completo de la estrategia en [`docs/STRATEGY_SPEC.md`](docs/STRATEGY_SPEC.md).
+> La explicación completa de las innovaciones, punto por punto frente a la cuadrícula del exchange, está en [`docs/INNOVATIONS.en.md`](docs/INNOVATIONS.en.md); el principio completo de la estrategia, en [`docs/STRATEGY_SPEC.md`](docs/STRATEGY_SPEC.md).
 
 ## ✨ Resumen de funciones
 
-- **Múltiples rangos de precio**: preconfigura varios rangos no superpuestos (por ejemplo, 2000–2600, 2600–3200); se activa el rango en el que entra el precio
-- **Apertura por seguimiento**: sigue el punto bajo y solo abre posición tras confirmar el rebote
-- **Precios dinámicos en tres rangos**: Maker en la zona POC, bloqueo de ganancias adicionales en la zona GTC, rechazo de órdenes en la zona de cortocircuito
-- **Amortiguador de stop-loss escalonado**: varios niveles de órdenes condicionales algorítmicas que reducen la posición de forma escalonada por debajo de la cuadrícula principal
+- **Autorreparación independiente del estado**: posición objetivo = f(precio actual); tras un fallo, un corte de red o una modificación manual de la posición, al reiniciar corrige automáticamente cualquier desviación
 - **Notificaciones en tiempo real por WebSocket**: Ticker / ejecuciones / eventos de la máquina de estados sincronizados en tiempo real con el frontend
 - **Soporte multi-exchange**: interfaz de adaptador unificada, compatible con Binance, Gate.io y OKX
+- **Sugerencias de configuración de rangos con IA**: recomienda rangos y parámetros de forma offline, sin intervenir en las decisiones de trading en tiempo real
 - **Interfaz multilingüe**: 12 idiomas integrados
 
 ## 💰 Entiende las comisiones y ahorra usando un código de invitación al registrarte (patrocinador rebateto.me)
@@ -197,6 +200,7 @@ pnpm prisma studio         # Visualiza los datos
 
 | Documento | Descripción |
 |------|------|
+| [`docs/INNOVATIONS.en.md`](docs/INNOVATIONS.en.md) | Explicación completa de las innovaciones clave (comparación punto por punto con la cuadrícula nativa) |
 | [`docs/STRATEGY_SPEC.md`](docs/STRATEGY_SPEC.md) | Especificación completa de la estrategia (referencia autorizada) |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Índice de mapeo de componentes de código a secciones de la especificación |
 | [`docs/fees-and-funding.md`](docs/fees-and-funding.md) | Explicación de comisiones y tarifas de financiación |
