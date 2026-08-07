@@ -12,6 +12,7 @@ import { LanguageSync } from "./language-sync";
 import { TickerProvider } from "./shell";
 import { useThemeStore, readInitialTheme } from "@/lib/store";
 import { Toaster } from "sonner";
+import { ConfirmDialogHost } from "@/components/ui/confirm-dialog";
 import type { Lang } from "@/lib/i18n-shared";
 import {
   handleQueryError,
@@ -57,6 +58,7 @@ export function Providers({
         <TickerProvider>
           {children}
           <Toaster position="top-right" richColors />
+          <ConfirmDialogHost />
         </TickerProvider>
       </I18nProvider>
     </QueryClientProvider>

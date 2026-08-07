@@ -147,6 +147,30 @@ body {
 .gp-table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .gp-table-scroll table { min-width: 720px; }
 
+/* Horizontal-scroll fade hint: content near the trailing edge fades out so a
+   viewport reads "there's more this way" without a scrollbar being visible
+   (mobile Safari/Chrome hide scrollbars by default). Fades content itself
+   via mask rather than an overlay, so it needs no background-color matching
+   across the different surfaces it's used on. Gradient value lives in one
+   CSS variable so every usage site (table-scroll here + the settings tab
+   strip below) stays in sync.
+   IMPORTANT: on `.gp-table-scroll` this only applies when `[data-overflowing]`
+   is present (set by <TableScroll>, apps/web/components/ui/table-scroll.tsx,
+   which measures scrollWidth > clientWidth at runtime). Content width varies
+   by viewport/data, so whether a `.gp-table-scroll` actually needs scrolling
+   is not knowable from CSS alone — applying the mask unconditionally silently
+   fades fully-visible content on any page/width where it happens to fit
+   (found in code review: /keys desktop table's edit/delete icon column was
+   being permanently faded even though nothing there scrolls). */
+:root {
+  --gp-scroll-fade: linear-gradient(to right, black calc(100% - 28px), transparent 100%);
+}
+.gp-table-scroll[data-overflowing],
+.gp-scroll-fade-x {
+  -webkit-mask-image: var(--gp-scroll-fade);
+  mask-image: var(--gp-scroll-fade);
+}
+
 /* Sidebar overlay */
 .gp-overlay {
   position: fixed; inset: 0; background: rgba(0,0,0,0.5);
@@ -233,6 +257,11 @@ body {
     gap: 4px !important;
     padding-bottom: 8px;
     -webkit-overflow-scrolling: touch;
+    /* 7 个 tab 在手机宽度下必定装不下，恒定需要横滑（不像表格宽度因内容/视口而定），
+       不需要 [data-overflowing] 那套运行时检测；渐变值取自 --gp-scroll-fade（见上方
+       Table scroll container 小节），不在此重复字面量 */
+    -webkit-mask-image: var(--gp-scroll-fade);
+    mask-image: var(--gp-scroll-fade);
   }
   .settings-tabs button {
     flex-shrink: 0;

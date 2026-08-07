@@ -43,4 +43,20 @@ describe("BoxForm", () => {
     render(<BoxForm value={value} onChange={() => {}} direction="LONG" price={2700} />);
     expect(screen.getByText("robot.activation_range_error")).toBeTruthy();
   });
+
+  it("每格量按箱体最低价折算名义价值不足交易所最小下单量时显示 orderSize 错误", () => {
+    // boxLowPrice = 2800-400-2-8 = 2390；0.005 × 2390 = 11.95 < 20
+    const value = { ...emptyBoxFormValue(), takeProfitPrice: "2800", mainGridCount: "200", mainGridStep: "2", stopLossGridStep: "2", mainGridPortionSize: "0.005" };
+    render(
+      <BoxForm value={value} onChange={() => {}} direction="LONG" price={2700}
+        marketConstraints={{ minQty: 0.001, minNotional: 20, stepSize: 0.01 }} />,
+    );
+    expect(screen.getByText("robot.order_size_below_minimum")).toBeTruthy();
+  });
+
+  it("不传 marketConstraints（拉取失败降级）时不显示 orderSize 错误", () => {
+    const value = { ...emptyBoxFormValue(), takeProfitPrice: "2800", mainGridCount: "200", mainGridStep: "2", stopLossGridStep: "2", mainGridPortionSize: "0.0000001" };
+    render(<BoxForm value={value} onChange={() => {}} direction="LONG" price={2700} />);
+    expect(screen.queryByText("robot.order_size_below_minimum")).toBeNull();
+  });
 });

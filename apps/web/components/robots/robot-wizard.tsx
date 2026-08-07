@@ -7,6 +7,7 @@ import { robotApi } from "@/lib/api";
 import { useCredentials } from "@/lib/hooks/useCredentials";
 import { useLang } from "@/lib/i18n-context";
 import { Button } from "@/components/ui/primitives";
+import { Modal } from "@/components/ui/modal";
 import { Icons } from "@/components/ui/icons";
 import { BoxForm } from "./box-form";
 import { SymbolPicker } from "@/components/robots/symbol-picker";
@@ -61,8 +62,10 @@ export function RobotWizard() {
   const [createError, setCreateError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [symbolBlocked, setSymbolBlocked] = useState(false);
+  const [showLiveConfirm, setShowLiveConfirm] = useState(false);
 
   const selectedExchangeId = credentials?.find((c) => c.id === credentialId)?.exchangeId;
+  const selectedEnvironment = credentials?.find((c) => c.id === credentialId)?.environment;
 
   // seedBox 预填（AI 推荐一键创建，from 优先）
   useEffect(() => {
@@ -295,8 +298,38 @@ export function RobotWizard() {
         <Button variant="ghost" onClick={() => router.push("/robots")}>{t("common.cancel")}</Button>
         {step > 1 && <Button variant="outline" onClick={goBack} data-testid="wizard-back" icon={<Icons.ChevronRight size={14} style={{ transform: "rotate(180deg)" }} />}>{t("robot.wizard_back")}</Button>}
         {step < 3 && <Button variant="primary" onClick={goNext} data-testid="wizard-next" icon={<Icons.ChevronRight size={14} />}>{t("robot.wizard_next")}</Button>}
-        {step === 3 && <Button variant="primary" onClick={handleCreate} disabled={submitting} data-testid="wizard-create" icon={<Icons.Check size={14} />}>{t("robot.wizard_create")}</Button>}
+        {step === 3 && (
+          <Button
+            variant="primary"
+            onClick={() => { if (selectedEnvironment !== "demo") { setShowLiveConfirm(true); } else { handleCreate(); } }}
+            disabled={submitting}
+            data-testid="wizard-create"
+            icon={<Icons.Check size={14} />}
+          >
+            {t("robot.wizard_create")}
+          </Button>
+        )}
       </div>
+
+      <Modal
+        open={showLiveConfirm}
+        title={t("robot.live_confirm_title")}
+        onClose={() => setShowLiveConfirm(false)}
+      >
+        <div data-testid="wizard-live-confirm-modal" style={{ fontSize: 13, color: "var(--fg-1)", marginBottom: 16 }}>
+          {t("robot.live_confirm_body")}
+        </div>
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <Button variant="ghost" data-testid="wizard-live-confirm-cancel" onClick={() => setShowLiveConfirm(false)}>{t("common.cancel")}</Button>
+          <Button
+            variant="primary"
+            data-testid="wizard-live-confirm-ok"
+            onClick={() => { setShowLiveConfirm(false); handleCreate(); }}
+          >
+            {t("common.confirm")}
+          </Button>
+        </div>
+      </Modal>
     </div>
   );
 }

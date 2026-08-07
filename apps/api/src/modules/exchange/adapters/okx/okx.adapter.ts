@@ -35,8 +35,9 @@ import { Logger } from "@nestjs/common";
 import { OkxRestClient } from "./okx-rest-client";
 import { OkxWsClient } from "./okx-ws-client";
 import { toOkxSymbol, toOkxClientId, coinToContracts, contractsToCoin , okxSanitizeClientId } from "../utils";
-import { OKX_WS_PUBLIC, OKX_WS_PRIVATE } from "./okx.types";
+import { OKX_WS_PUBLIC, OKX_WS_PRIVATE, OKX_WS_PUBLIC_LIVE, OKX_WS_PRIVATE_LIVE } from "./okx.types";
 import { withRetry } from "../utils/retry";
+import { ExchangeEnvironment } from "@gridpilot/shared-types";
 
 /** OKX error codes that are safe to retry (transient server/rate issues) */
 const OKX_RETRYABLE_CODES = new Set([
@@ -209,6 +210,7 @@ export class OkxAdapter implements IExchangeAdapter {
 
   private readonly logger = new Logger(OkxAdapter.name);
   private rest: OkxRestClient;
+  private environment: ExchangeEnvironment;
   private contractSizes = new Map<string, number>();
   private lotSizes = new Map<string, number>();
   private credentials: OkxCredentials;
@@ -221,8 +223,9 @@ export class OkxAdapter implements IExchangeAdapter {
   private algoIdToClosePosition = new Map<string, boolean>();
   private algoIdToTriggerCondition = new Map<string, "price_below" | "price_above">();
 
-  constructor(credentials: OkxCredentials & { accountId?: string }) {
-    this.rest = new OkxRestClient(credentials);
+  constructor(credentials: OkxCredentials & { accountId?: string; environment?: ExchangeEnvironment }) {
+    this.environment = credentials.environment ?? "demo";
+    this.rest = new OkxRestClient(credentials, undefined, this.environment);
     this.credentials = credentials;
     this.accountId = credentials.accountId ?? "okx-account";
   }
@@ -347,7 +350,8 @@ export class OkxAdapter implements IExchangeAdapter {
 
   private async getPublicWs(): Promise<OkxWsClient> {
     if (!this.publicWs) {
-      this.publicWs = new OkxWsClient(this.credentials, OKX_WS_PUBLIC);
+      const url = this.environment === "live" ? OKX_WS_PUBLIC_LIVE : OKX_WS_PUBLIC;
+      this.publicWs = new OkxWsClient(this.credentials, url, false);
       await this.publicWs.connect();
     }
     return this.publicWs;
@@ -355,7 +359,8 @@ export class OkxAdapter implements IExchangeAdapter {
 
   private async getPrivateWs(): Promise<OkxWsClient> {
     if (!this.privateWs) {
-      this.privateWs = new OkxWsClient(this.credentials, OKX_WS_PRIVATE);
+      const url = this.environment === "live" ? OKX_WS_PRIVATE_LIVE : OKX_WS_PRIVATE;
+      this.privateWs = new OkxWsClient(this.credentials, url, true);
       await this.privateWs.connect(); // connect() auto-calls login()
     }
     return this.privateWs;
@@ -564,24 +569,28 @@ export class OkxAdapter implements IExchangeAdapter {
     const res = (await this.rest.placeOrder(body)) as {
       code: string;
       msg: string;
-      data?: Array<{ ordId: string; clOrdId?: string }>;
+      data?: Array<{ ordId: string; clOrdId?: string; sCode?: string; sMsg?: string }>;
     };
 
     if (res.code !== "0") {
-      if (res.code === "51420") {
+      // 顶层 code:"1" msg:"All operations failed" 时真实原因在 data[0].sCode/sMsg，
+      // 与 cancelOrder 同一 OKX 接口特性，同样必须透传，否则 actionable-rejections
+      // 白名单里的 51008/51010 永远匹配不上（见 okx.adapter.unit.spec.ts 对应用例）。
+      const { code, message } = extractOkxBatchError(res);
+      if (code === "51420") {
         throw new ExchangeError(
-          `OKX createOrder failed: ${res.msg}`,
-          res.code,
+          `OKX createOrder failed: ${message}`,
+          code,
           this.exchangeId,
           false,
           ErrorCategory.POST_ONLY_REJECT,
         );
       }
       throw new ExchangeError(
-        `OKX createOrder failed: ${res.msg}`,
-        res.code,
+        `OKX createOrder failed: ${message}`,
+        code,
         this.exchangeId,
-        isRetryableOkxCode(res.code),
+        isRetryableOkxCode(code),
       );
     }
 
@@ -668,14 +677,18 @@ export class OkxAdapter implements IExchangeAdapter {
     )) as {
       code: string;
       msg: string;
+      data?: Array<{ ordId?: string; sCode?: string; sMsg?: string }>;
     };
 
     if (res.code !== "0") {
+      // 与 cancelOrder 同一 OKX 接口特性：顶层 code:"1" msg:"All operations failed" 时
+      // 真实原因在 data[0].sCode/sMsg。
+      const { code, message } = extractOkxBatchError(res);
       throw new ExchangeError(
-        `OKX cancelBatchOrders failed: ${res.msg}`,
-        res.code,
+        `OKX cancelBatchOrders failed: ${message}`,
+        code,
         this.exchangeId,
-        isRetryableOkxCode(res.code),
+        isRetryableOkxCode(code),
       );
     }
   }
@@ -712,15 +725,16 @@ export class OkxAdapter implements IExchangeAdapter {
     const res = (await this.rest.placeOrder(body)) as {
       code: string;
       msg: string;
-      data?: Array<{ ordId: string; clOrdId?: string }>;
+      data?: Array<{ ordId: string; clOrdId?: string; sCode?: string; sMsg?: string }>;
     };
 
     if (res.code !== "0") {
+      const { code, message } = extractOkxBatchError(res);
       throw new ExchangeError(
-        `OKX closePosition failed: ${res.msg}`,
-        res.code,
+        `OKX closePosition failed: ${message}`,
+        code,
         this.exchangeId,
-        isRetryableOkxCode(res.code),
+        isRetryableOkxCode(code),
       );
     }
 

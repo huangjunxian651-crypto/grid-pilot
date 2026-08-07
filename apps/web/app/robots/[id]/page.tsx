@@ -3,7 +3,8 @@
 import React, { use, useState } from "react";
 import Link from "next/link";
 import { Shell } from "@/components/shell/shell";
-import { useRobot, usePauseRobot, useStartRobot, useStopRobot, useAddBox, useRemoveBox, useEditBox } from "@/lib/hooks/useBots";
+import { useRobot, usePauseRobot, useStartRobot, useStopRobot, useAddBox, useRemoveBox, useEditBox, useMarketConstraints } from "@/lib/hooks/useBots";
+import { useConfirm } from "@/lib/hooks/useConfirm";
 import { Button, SectionHeader, ExchangeMark } from "@/components/ui/primitives";
 import { TermHelp } from "@/components/ui/term-help";
 import { MonitorPanel } from "./_monitor";
@@ -23,6 +24,7 @@ import {
   boxFormErrors,
   boxFormPreviewLayout,
 } from "@/components/robots/box-form-model";
+import { activeBoxRoiText } from "@/lib/margin-roi";
 
 
 export default function RobotDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -38,15 +40,16 @@ export default function RobotDetailPage({ params }: { params: Promise<{ id: stri
 
   const [showAddBox, setShowAddBox] = useState(false);
   const [editTarget, setEditTarget] = useState<string | null>(null);
-  const [removeTarget, setRemoveTarget] = useState<string | null>(null);
-  const [removeClosePos, setRemoveClosePos] = useState(false);
-  const [showStopDialog, setShowStopDialog] = useState(false);
-  const [stopClosePos, setStopClosePos] = useState(true);
   const [boxError, setBoxError] = useState<string | null>(null);
   const [boxValue, setBoxValue] = useState<BoxFormValue>(emptyBoxFormValue());
+  const confirm = useConfirm();
+
+  // 只在新增/编辑箱体弹窗打开时才拉，避免机器人详情页每次加载都多打一个请求。
+  const { data: marketConstraints } = useMarketConstraints(id, showAddBox);
 
   const liveEvents = useBotEvents(robot?.activeSessionCode ?? null);
   const liveUnrealized = liveEvents.liveStatus?.unrealizedPnl ?? 0;
+  const liveStatus = liveEvents.liveStatus ?? null;
 
   if (isLoading || !robot) {
     return (
@@ -83,19 +86,66 @@ export default function RobotDetailPage({ params }: { params: Promise<{ id: stri
     }
   };
 
-  const confirmRemove = () => {
-    if (!removeTarget) return;
-    const configId = removeTarget;
-    removeBox.mutate({ configId, closePosition: removeClosePos }, {
-      onSuccess: () => { toast.success(t("robot.toast_box_removed")); setRemoveTarget(null); setRemoveClosePos(false); },
-        onError: (err: Error) => { toast.error(t("common.delete_failed", { reason: err.message })); },
+  const handleRemoveBox = async (configId: string) => {
+    const isActiveBox = configId === robot.activeBoxId;
+    const closePosRef = { current: false };
+    const ok = await confirm({
+      tier: "simple",
+      title: t("robot.remove_box_title"),
+      body: isActiveBox ? (
+        <>
+          {t("robot.remove_active_body")}
+          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer", marginTop: 12 }}>
+            <input
+              type="checkbox"
+              defaultChecked={false}
+              data-testid="close-pos-checkbox"
+              onChange={(e) => { closePosRef.current = e.target.checked; }}
+            />
+            {t("robot.remove_close_pos")}
+          </label>
+        </>
+      ) : t("robot.remove_body"),
+      confirmLabel: t("robot.confirm_remove"),
+    });
+    if (!ok) return;
+    removeBox.mutate({ configId, closePosition: closePosRef.current }, {
+      onSuccess: () => { toast.success(t("robot.toast_box_removed")); },
+      onError: (err: Error) => { toast.error(t("common.delete_failed", { reason: err.message })); },
+    });
+  };
+
+  const handleStop = async () => {
+    const closePosRef = { current: true };
+    const ok = await confirm({
+      tier: "simple",
+      title: t("bot.stop_modal_title"),
+      body: (
+        <>
+          {t("bot.stop_modal_body")}
+          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer", marginTop: 12 }}>
+            <input
+              type="checkbox"
+              defaultChecked
+              data-testid="stop-close-pos-checkbox"
+              onChange={(e) => { closePosRef.current = e.target.checked; }}
+            />
+            {t("bot.stop_close_position")}
+          </label>
+        </>
+      ),
+      confirmLabel: t("common.confirm_stop"),
+    });
+    if (!ok) return;
+    stopRobot.mutate({ id: robot.id, closePosition: closePosRef.current }, {
+      onSuccess: () => toast.success(t("bot.stop_submitted")),
     });
   };
 
   // 几何错误仅在能出预览（参数足够）时才阻止提交，与 BoxForm 的 `layout && errs.geometry` 展示守卫保持一致；激活错误本身已隐含 layout 存在。
-  const boxSubmitErrors = boxFormErrors(boxValue, robot.direction);
+  const boxSubmitErrors = boxFormErrors(boxValue, robot.direction, marketConstraints);
   const boxSubmitLayout = boxFormPreviewLayout(boxValue, robot.direction);
-  const isBoxSubmitDisabled = (!!boxSubmitLayout && !!boxSubmitErrors.geometry) || !!boxSubmitErrors.activation;
+  const isBoxSubmitDisabled = (!!boxSubmitLayout && !!boxSubmitErrors.geometry) || !!boxSubmitErrors.activation || !!boxSubmitErrors.orderSize;
   // 归档（STOPPED 终态）为只读：隐藏箱体写操作控件，与后端 ROBOT_ARCHIVED 守卫呼应（纵深防御）。
   const isArchived = robot.status === "STOPPED";
 
@@ -115,6 +165,17 @@ export default function RobotDetailPage({ params }: { params: Promise<{ id: stri
             <h1 style={{ fontFamily: "var(--font-display)", fontSize: 22, fontWeight: 600, letterSpacing: -0.5 }} data-testid="robot-symbol">
               {robot.symbol}
               <span data-testid="robot-exchange" style={{ fontSize: 12, color: "var(--fg-3)", marginLeft: 8, fontWeight: 400, fontFamily: "var(--font-sans)" }}>{fmt.exchangeName(robot.exchangeId)} · {robot.accountLabel}</span>
+              {robot.environment === "live" && (
+                <span
+                  data-testid="robot-live-badge"
+                  style={{
+                    marginLeft: 8, fontSize: 11, fontWeight: 600, padding: "2px 7px",
+                    borderRadius: 4, background: "var(--alpha-tint)", color: "var(--warn)",
+                  }}
+                >
+                  {t("keys.environment_live")}
+                </span>
+              )}
             </h1>
             <div style={{ fontSize: 12, color: "var(--fg-2)", marginTop: 3 }}>
               {t(`dir.${robot.direction}`)} · <span data-testid="robot-status">{robot.status}</span> · {t("kpi.mark")} <span className="num" style={{ color: "var(--fg-1)" }}>{robot.latestPrice != null ? robot.latestPrice.toFixed(2) : "—"}</span>
@@ -123,13 +184,17 @@ export default function RobotDetailPage({ params }: { params: Promise<{ id: stri
         </div>
         <div style={{ display: "flex", gap: 6 }}>
           {robot.status === "RUNNING" && (
-            <Button variant="ghost" size="md" icon={<Icons.Pause size={13} />} onClick={() => pauseRobot.mutate(robot.id, { onSuccess: () => toast.success(t("robot.toast_paused")) })}>{t("robot.action_pause")}</Button>
+            <Button variant="ghost" size="md" icon={<Icons.Pause size={13} />} onClick={async () => {
+              const ok = await confirm({ tier: "simple", title: t("robot.pause_confirm_title"), body: t("robot.pause_confirm_body") });
+              if (!ok) return;
+              pauseRobot.mutate(robot.id, { onSuccess: () => toast.success(t("robot.toast_paused")) });
+            }}>{t("robot.action_pause")}</Button>
           )}
           {robot.status === "PAUSED" && (
             <Button variant="primary" size="md" icon={<Icons.Play size={13} />} onClick={() => startRobot.mutate(robot.id, { onSuccess: () => toast.success(t("robot.toast_started")) })}>{t("robot.action_start")}</Button>
           )}
           {robot.status !== "STOPPED" && (
-            <Button danger size="md" icon={<Icons.Stop size={13} />} disabled={robot.status === "STOPPING"} onClick={() => { setStopClosePos(true); setShowStopDialog(true); }}>{t("robot.action_stop")}</Button>
+            <Button danger size="md" icon={<Icons.Stop size={13} />} disabled={robot.status === "STOPPING"} onClick={handleStop}>{t("robot.action_stop")}</Button>
           )}
           <ReconcileButton robotId={robot.id} status={robot.status} />
           {robot.status === "STOPPED" && (
@@ -167,6 +232,8 @@ export default function RobotDetailPage({ params }: { params: Promise<{ id: stri
             const boxNetPnl = b.netPnl ?? 0;
             const boxUnrealized = isActive ? liveUnrealized : 0;
             const boxTotal = boxNetPnl + boxUnrealized;
+            const boxUnrealizedRoi = activeBoxRoiText(boxUnrealized, isActive, liveStatus);
+            const boxTotalRoi = activeBoxRoiText(boxTotal, isActive, liveStatus);
             const money = (v: number) => `${v >= 0 ? "+" : ""}$${v.toFixed(2)}`;
             const pnlColor = (v: number) => (v >= 0 ? "var(--up)" : "var(--down)");
             // 配置压成一行可读文本（箱版 A）；保留全部术语帮助 TermHelp
@@ -198,7 +265,7 @@ export default function RobotDetailPage({ params }: { params: Promise<{ id: stri
                     <div className="num" style={{ fontSize: 11.5, display: "flex", gap: 16, flexWrap: "wrap" }}>
                       <span data-testid="box-pnl" style={{ display: "inline-flex", alignItems: "center" }}><span style={{ color: "var(--fg-3)" }}>{t("robot.pnl_realized")} </span><span style={{ color: pnlColor(realized), fontWeight: 500 }}>{money(realized)}</span><TermHelp term="realizedPnl" title={t("kpi.realized")} /></span>
                       <span data-testid="box-pnl" style={{ display: "inline-flex", alignItems: "center" }}><span style={{ color: "var(--fg-3)" }}>{t("robot.pnl_savings")} </span><span style={{ color: pnlColor(savings), fontWeight: 500 }}>{money(savings)}</span><TermHelp term="savings" title={t("bot.fill_savings")} /></span>
-                      {isActive && <span data-testid="box-pnl" style={{ display: "inline-flex", alignItems: "center" }}><span style={{ color: "var(--fg-3)" }}>{t("robot.pnl_unrealized")} </span><span style={{ color: pnlColor(boxUnrealized), fontWeight: 500 }}>{money(boxUnrealized)}</span><TermHelp term="unrealizedPnl" title={t("kpi.unrealized")} /></span>}
+                      {isActive && <span data-testid="box-pnl" style={{ display: "inline-flex", alignItems: "center" }}><span style={{ color: "var(--fg-3)" }}>{t("robot.pnl_unrealized")} </span><span style={{ color: pnlColor(boxUnrealized), fontWeight: 500 }}>{money(boxUnrealized)}</span><TermHelp term="unrealizedPnl" title={t("kpi.unrealized")} />{boxUnrealizedRoi != null && <span data-testid="box-unrealized-roi" style={{ marginLeft: 4, color: pnlColor(boxUnrealized) }}>{boxUnrealizedRoi}</span>}</span>}
                     </div>
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8, flexShrink: 0 }}>
@@ -210,14 +277,17 @@ export default function RobotDetailPage({ params }: { params: Promise<{ id: stri
                         // 非活跃箱：值 = 纯 netPnl（已实现 − 手续费 − 资金费，未实现恒为 0）
                         <div style={{ fontSize: 10, color: "var(--fg-3)", display: "flex", alignItems: "center", justifyContent: "flex-end" }}>{t("kpi.net_pnl")}<TermHelp term="netPnl" title={t("kpi.net_pnl")} /></div>
                       )}
-                      <div className="num" style={{ fontSize: 20, fontWeight: 600, color: pnlColor(boxTotal) }}>{money(boxTotal)}</div>
+                      <div className="num" style={{ fontSize: 20, fontWeight: 600, color: pnlColor(boxTotal) }}>
+                        {money(boxTotal)}
+                        {boxTotalRoi != null && <span data-testid="box-total-roi" style={{ marginLeft: 6, fontSize: 12 }}>{boxTotalRoi}</span>}
+                      </div>
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                       <Link href={`/robots/${id}/boxes/${b.id}`} style={{ fontSize: 12, color: "var(--accent)" }} data-testid="box-history-link">{t("robot.box_history")}</Link>
                       {!isArchived && (
                         <>
                           <Button variant="ghost" size="sm" icon={<Icons.Edit size={13} />} onClick={() => openEditBox(b)} data-testid="edit-box-btn">{t("common.edit")}</Button>
-                          <Button variant="ghost" size="sm" danger icon={<Icons.Trash size={13} />} onClick={() => { setRemoveTarget(b.id); setRemoveClosePos(false); }} data-testid="remove-box-btn">{t("common.delete")}</Button>
+                          <Button variant="ghost" size="sm" danger icon={<Icons.Trash size={13} />} onClick={() => handleRemoveBox(b.id)} data-testid="remove-box-btn">{t("common.delete")}</Button>
                         </>
                       )}
                     </div>
@@ -251,7 +321,7 @@ export default function RobotDetailPage({ params }: { params: Promise<{ id: stri
                 {t("robot.edit_active_warning")}
               </div>
             )}
-            <BoxForm value={boxValue} onChange={setBoxValue} direction={robot.direction === "SHORT" ? "SHORT" : "LONG"} price={robot.latestPrice ?? 0} />
+            <BoxForm value={boxValue} onChange={setBoxValue} direction={robot.direction === "SHORT" ? "SHORT" : "LONG"} price={robot.latestPrice ?? 0} marketConstraints={marketConstraints} />
             {boxError && <div data-testid="box-error" style={{ fontSize: 11, color: "var(--down)", marginTop: 8, padding: 8, background: "rgba(239,68,68,0.06)", borderRadius: 4 }}>{boxError}</div>}
             <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 20 }}>
               <Button variant="ghost" onClick={() => { setShowAddBox(false); setEditTarget(null); }}>{t("common.cancel")}</Button>
@@ -261,55 +331,6 @@ export default function RobotDetailPage({ params }: { params: Promise<{ id: stri
         </div>
       )}
 
-      {/* 删活跃箱平仓选择弹窗 */}
-      {removeTarget && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200 }}>
-          <div style={{ background: "var(--bg-1)", border: "1px solid var(--border-strong)", borderRadius: 16, padding: 28, width: "100%", maxWidth: 440 }}>
-            <div style={{ fontSize: 16, fontWeight: 500, marginBottom: 8 }}>{t("robot.remove_box_title")}</div>
-            <div style={{ fontSize: 13, color: "var(--fg-2)", marginBottom: 16, lineHeight: 1.6 }}>
-              {removeTarget === robot.activeBoxId
-                ? t("robot.remove_active_body")
-                : t("robot.remove_body")}
-            </div>
-            {removeTarget === robot.activeBoxId && (
-              <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16, fontSize: 13, cursor: "pointer" }}>
-                <input type="checkbox" checked={removeClosePos} onChange={(e) => setRemoveClosePos(e.target.checked)} data-testid="close-pos-checkbox" />
-                {t("robot.remove_close_pos")}
-              </label>
-            )}
-            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-              <Button variant="ghost" onClick={() => { setRemoveTarget(null); setRemoveClosePos(false); }}>{t("common.cancel")}</Button>
-              <Button danger onClick={confirmRemove} data-testid="confirm-remove-box">{t("robot.confirm_remove")}</Button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 停止机器人弹窗 */}
-      {showStopDialog && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200 }}>
-          <div style={{ background: "var(--bg-1)", border: "1px solid var(--border-strong)", borderRadius: 16, padding: 28, width: "100%", maxWidth: 440 }}>
-            <div style={{ fontSize: 16, fontWeight: 500, marginBottom: 8 }}>{t("bot.stop_modal_title")}</div>
-            <div style={{ fontSize: 13, color: "var(--fg-2)", marginBottom: 16, lineHeight: 1.6 }}>
-              {t("bot.stop_modal_body")}
-            </div>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16, fontSize: 13, cursor: "pointer" }}>
-              <input type="checkbox" checked={stopClosePos} onChange={(e) => setStopClosePos(e.target.checked)} data-testid="stop-close-pos-checkbox" />
-              {t("bot.stop_close_position")}
-            </label>
-            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-              <Button variant="ghost" onClick={() => { setShowStopDialog(false); setStopClosePos(true); }}>{t("common.cancel")}</Button>
-              <Button danger onClick={() => {
-                stopRobot.mutate({ id: robot.id, closePosition: stopClosePos }, {
-                  onSuccess: () => { toast.success(t("bot.stop_submitted")); },
-                });
-                setShowStopDialog(false);
-                setStopClosePos(true);
-              }} data-testid="confirm-stop-robot">{t("common.confirm_stop")}</Button>
-            </div>
-          </div>
-        </div>
-      )}
     </Shell>
   );
 }

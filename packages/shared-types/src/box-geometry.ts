@@ -366,6 +366,45 @@ export function validateBoxGeometry(
   return { valid: errors.length === 0, errors };
 }
 
+// ── 最小下单量下限（供 apps/api 服务端与 apps/web 表单前端共用同一口径） ─────────
+
+export interface OrderSizeConstraints {
+  minQty: number;
+  minNotional: number;
+  stepSize: number;
+}
+
+/**
+ * 箱体每格量的最小允许值。按箱体真实最低价（boxLowPrice，不是实时价——网格要在整个箱体
+ * 价格区间内持续成交，只要在最低价上仍满足门槛，价格无论怎么走名义价值都只会更大）折算
+ * minNotional 要求的下单量，与 minQty 取较大者，再按 stepSize 向上取整。
+ *
+ * 向上取整这一步不可省：交易所下单时会把数量向下截断到 stepSize 的整数倍，若不预先向上
+ * 取整，用户填入的值即便刚好过了未取整的理论最小值，实际下单被截断后名义价值仍可能跌破
+ * minNotional（例：minNotional=20、boxLowPrice=1800 → 理论最小 0.0111，stepSize=0.01
+ * 截断成 0.01 后名义价值只有 18，又跌破门槛；向上取整到 0.02 才是真实下限）。
+ *
+ * 不含合约乘数（quantoMultiplier/contractSize）：这里假定下单量已经是基础币单位，与
+ * 运行期 isPlaceable()（apps/api grid-geometry.ts）的口径一致——该函数虽然接收
+ * quantoMultiplier 参数，但 grid-bot-runner.ts 的 buildStrategyConfig() 从未把真实值
+ * 传进去，运行期这个乘数恒为 1（死代码）。若未来接通了那条管线，这里必须同步补上，
+ * 否则保存时校验通过、运行时因合约乘数被截断会再次跌破门槛。
+ */
+export function minOrderSizeRequirement(
+  boxLowPrice: number,
+  constraints: OrderSizeConstraints,
+): number {
+  const { minQty, minNotional, stepSize } = constraints;
+  const notionalMin = minNotional > 0 && boxLowPrice > 0 ? minNotional / boxLowPrice : 0;
+  const rawMin = Math.max(minQty, notionalMin);
+  if (stepSize > 0) {
+    // epsilon 对齐 format-precision.ts::formatQty 的既有惯例（同一类"防浮点噪声导致
+    // 多/少取整一级"问题，那边用的也是 0.0001，作用在同一个 qty/stepSize 商空间）。
+    return Math.ceil(rawMin / stepSize - 0.0001) * stepSize;
+  }
+  return rawMin;
+}
+
 // ── 动作预测（d 空间单实现） ─────────────────────────────────────
 
 export interface PredictAction {

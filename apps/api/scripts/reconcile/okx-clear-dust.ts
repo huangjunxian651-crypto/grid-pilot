@@ -4,13 +4,19 @@ import { OkxAdapter } from "../../src/modules/exchange/adapters/okx/okx.adapter"
 import { CredentialCrypto } from "../../src/modules/credential/credential-crypto";
 async function main() {
   const prisma = new PrismaClient();
-  const account = await prisma.exchangeAccount.findFirst({ where: { exchangeId: "okx" } });
+  // 护栏：本脚本会真实平仓，只允许触达 demo 账户，避免误伤 live 实盘持仓
+  const account = await prisma.exchangeAccount.findFirst({ where: { exchangeId: "okx", environment: "demo" } });
+  if (!account) {
+    console.error("No demo-environment OKX account found. This script only targets demo accounts by design.");
+    process.exit(1);
+  }
   const crypto = new CredentialCrypto(process.env.ENCRYPTION_KEY ?? "");
   const adapter = new OkxAdapter({
     apiKey: crypto.decrypt(account!.apiKey),
     apiSecret: crypto.decrypt(account!.apiSecret),
     passphrase: account!.passphrase ? crypto.decrypt(account!.passphrase) : "",
     accountId: account!.accountId,
+    environment: account!.environment as "demo" | "live",
   });
   const before = await adapter.fetchPosition("ETH/USDT");
   console.log("before:", before.side, before.qty);

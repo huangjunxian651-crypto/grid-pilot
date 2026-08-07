@@ -22,6 +22,9 @@ export const GATEIO_SYMBOL = "ETH_USDT";
 // WebSocket docs: https://www.gate.com/docs/developers/futures/ws/en/
 export const GATEIO_REST_TESTNET = "https://api-testnet.gateapi.io/api/v4";
 export const GATEIO_WS_TESTNET = "wss://ws-testnet.gate.com/v4/ws/futures/usdt";
+// Live (real funds) endpoints
+export const GATEIO_REST_LIVE = "https://api.gateio.ws/api/v4";
+export const GATEIO_WS_LIVE = "wss://fx-ws.gateio.ws/v4/ws/usdt";
 
 export interface GateioCredentials {
   apiKey: string;

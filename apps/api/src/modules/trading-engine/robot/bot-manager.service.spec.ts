@@ -37,6 +37,7 @@ function makeService() {
   const pauseBot = vi.fn().mockResolvedValue(undefined);
   const captureStopSnapshot = vi.fn().mockResolvedValue(null);
   const assertSymbolTradable = vi.fn().mockResolvedValue(undefined);
+  const getMarketConstraints = vi.fn().mockResolvedValue(null);
 
   let emit: ((price: number) => void) | null = null;
   let stopped = false;
@@ -52,10 +53,10 @@ function makeService() {
     getBoxesLedger: vi.fn().mockResolvedValue(new Map()),
   };
 
-  const launcher = { startBot, stopBot, detachBot, pauseBot, captureStopSnapshot, assertSymbolTradable, setOnBoxTerminated: vi.fn() };
+  const launcher = { startBot, stopBot, detachBot, pauseBot, captureStopSnapshot, assertSymbolTradable, getMarketConstraints, setOnBoxTerminated: vi.fn() };
   const svc = new BotManagerService(prisma as any, launcher as any, tickerSource as any, accountSnapshot as any, notification as any, pnlLedger as any);
   return {
-    svc, prisma, robotUpdate, boxFindMany, startBot, stopBot, detachBot, pauseBot, captureStopSnapshot, assertSymbolTradable, launcher, subscribe, notification, accountSnapshot, pnlLedger,
+    svc, prisma, robotUpdate, boxFindMany, startBot, stopBot, detachBot, pauseBot, captureStopSnapshot, assertSymbolTradable, getMarketConstraints, launcher, subscribe, notification, accountSnapshot, pnlLedger,
     pushPrice: (p: number) => emit?.(p),
     isStopped: () => stopped,
   };
@@ -147,6 +148,38 @@ describe('BotManagerService', () => {
     // 但未实现不可得 → null 契约
     expect(summary.lastUnrealizedPnl).toBeNull();
     expect(summary.totalPnl).toBeNull();
+  });
+
+  it('listRobots：直出活跃箱杠杆 activeBoxLeverage，供前端算保证金回报率', async () => {
+    // 前端算「盈亏 ÷ 占用保证金」需要杠杆，而杠杆此前只存在于 RobotDetail.boxes[]，
+    // 列表页与仪表盘拿不到 → 百分比无法计算。
+    const { svc, prisma, accountSnapshot, pnlLedger } = makeService();
+    (prisma.robot.findMany as any).mockResolvedValueOnce([
+      { id: 'robot-1', symbol: 'ETH/USDT', direction: 'LONG', status: 'RUNNING', activeBoxId: 'box-1',
+        account: { id: 'cred-1', exchangeId: 'binance', label: 'Acc' }, stopStage: null, stopWarning: null,
+        lastPositionQty: 0.3, lastEntryPrice: 1860, lastUnrealizedPnl: null, lastSnapshotAt: null },
+    ]);
+    (prisma.box.findMany as any).mockResolvedValueOnce([boxRow('box-1', { robotId: 'robot-1', isolationStep: 2, leverage: 20 })]);
+    (pnlLedger.getBoxesLedger as any).mockResolvedValue(new Map());
+    (accountSnapshot.getSnapshot as any).mockReturnValue(undefined);
+
+    const [summary] = await svc.listRobots();
+    expect(summary.activeBoxLeverage).toBe(20);
+  });
+
+  it('listRobots：无活跃箱时 activeBoxLeverage 为 null（前端据此不显示百分比）', async () => {
+    const { svc, prisma, accountSnapshot, pnlLedger } = makeService();
+    (prisma.robot.findMany as any).mockResolvedValueOnce([
+      { id: 'robot-2', symbol: 'ETH/USDT', direction: 'LONG', status: 'STOPPED', activeBoxId: null,
+        account: { id: 'cred-1', exchangeId: 'binance', label: 'Acc' }, stopStage: null, stopWarning: null,
+        lastPositionQty: null, lastEntryPrice: null, lastUnrealizedPnl: null, lastSnapshotAt: null },
+    ]);
+    (prisma.box.findMany as any).mockResolvedValueOnce([boxRow('box-2', { robotId: 'robot-2', isolationStep: 2, leverage: 20 })]);
+    (pnlLedger.getBoxesLedger as any).mockResolvedValue(new Map());
+    (accountSnapshot.getSnapshot as any).mockReturnValue(undefined);
+
+    const [summary] = await svc.listRobots();
+    expect(summary.activeBoxLeverage).toBeNull();
   });
 
   it('startRobot sets status RUNNING and registers a scheduler', async () => {
@@ -734,6 +767,19 @@ describe('BotManagerService', () => {
     expect(list[0].stopWarning).toBe('RESIDUAL_POSITION');
   });
 
+  it('listArchivedRobots 按 endedAt 降序排列（最近归档的排最前——归档后只读，endedAt 即最后更新时间）', async () => {
+    const { svc, prisma } = makeService();
+    prisma.robot.findMany.mockResolvedValue([]);
+    prisma.box.findMany.mockResolvedValue([]);
+    prisma.run.findMany.mockResolvedValue([]);
+
+    await svc.listArchivedRobots();
+
+    expect(prisma.robot.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ orderBy: { endedAt: 'desc' } }),
+    );
+  });
+
   it('getRobotDetail returns robot, its boxes, exchange, boxCount, pnl', async () => {
     const { svc, prisma } = makeService();
     ((prisma as any).robot).findUnique = vi.fn().mockResolvedValue({ id: 'robot-1', symbol: 'ETH/USDT', direction: 'LONG', status: 'RUNNING', activeBoxId: 'box-1', endedAt: null, accountId: 'cred-1', account: { exchangeId: 'gateio', label: 'Gate模拟' } });
@@ -862,6 +908,88 @@ describe('BotManagerService', () => {
     expect((prisma.box as any).create).not.toHaveBeenCalled();
   });
 
+  it('addBox rejects order size below exchange minimum with BOX_ORDER_SIZE_BELOW_MINIMUM code', async () => {
+    const { svc, prisma, getMarketConstraints } = makeService();
+    ((prisma as any).robot).findUnique = vi.fn().mockResolvedValue({ id: 'robot-1', symbol: 'ETH/USDT', direction: 'LONG', status: 'PAUSED', accountId: 'cred-1' });
+    (prisma.box as any).findMany = vi.fn().mockResolvedValue([]);
+    (prisma.box as any).create = vi.fn();
+    getMarketConstraints.mockResolvedValue({ minQty: 0.001, minNotional: 20 });
+
+    // boxLowPrice = 2800 - 400 - 2 - 8 = 2390；0.005 × 2390 = 11.95 < 20
+    const tooSmall = { direction: 'LONG', takeProfitPrice: 2800, mainGridCount: 200, mainGridStep: 2, mainGridPortionSize: 0.005, leverage: 20, stopLossGridCount: 4, stopLossGridStep: 2 };
+    const err = await svc.addBox('robot-1', tooSmall as any).catch((e) => e);
+
+    expect(getMarketConstraints).toHaveBeenCalledWith('cred-1', 'ETH/USDT');
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect((err.getResponse() as { code?: string }).code).toBe('BOX_ORDER_SIZE_BELOW_MINIMUM');
+    expect((prisma.box as any).create).not.toHaveBeenCalled();
+  });
+
+  it('addBox 通过：每格量在箱体最低价上满足交易所最小下单量', async () => {
+    const { svc, prisma, getMarketConstraints } = makeService();
+    ((prisma as any).robot).findUnique = vi.fn().mockResolvedValue({ id: 'robot-1', symbol: 'ETH/USDT', direction: 'LONG', status: 'PAUSED', accountId: 'cred-1' });
+    (prisma.box as any).findMany = vi.fn().mockResolvedValue([]);
+    (prisma.box as any).create = vi.fn().mockResolvedValue({ id: 'newbox' });
+    getMarketConstraints.mockResolvedValue({ minQty: 0.001, minNotional: 20 });
+
+    // 0.05 × 2390 = 119.5 ≥ 20
+    const ok = { direction: 'LONG', takeProfitPrice: 2800, mainGridCount: 200, mainGridStep: 2, mainGridPortionSize: 0.05, leverage: 20, stopLossGridCount: 4, stopLossGridStep: 2 };
+    const res = await svc.addBox('robot-1', ok as any);
+
+    expect(res.id).toBe('newbox');
+    expect((prisma.box as any).create).toHaveBeenCalled();
+  });
+
+  it('addBox：getMarketConstraints 拉取失败（返回 null）时降级放行，不阻断创建', async () => {
+    const { svc, prisma, getMarketConstraints } = makeService();
+    ((prisma as any).robot).findUnique = vi.fn().mockResolvedValue({ id: 'robot-1', symbol: 'ETH/USDT', direction: 'LONG', status: 'PAUSED', accountId: 'cred-1' });
+    (prisma.box as any).findMany = vi.fn().mockResolvedValue([]);
+    (prisma.box as any).create = vi.fn().mockResolvedValue({ id: 'newbox' });
+    getMarketConstraints.mockResolvedValue(null);
+
+    const tinySize = { direction: 'LONG', takeProfitPrice: 2800, mainGridCount: 200, mainGridStep: 2, mainGridPortionSize: 0.0000001, leverage: 20, stopLossGridCount: 4, stopLossGridStep: 2 };
+    const res = await svc.addBox('robot-1', tinySize as any);
+
+    expect(res.id).toBe('newbox');
+  });
+
+  it('addBox：getMarketConstraints 卡死不返回时超时降级放行，不无限等待用户点击后的保存请求', async () => {
+    vi.useFakeTimers();
+    try {
+      const { svc, prisma, getMarketConstraints } = makeService();
+      ((prisma as any).robot).findUnique = vi.fn().mockResolvedValue({ id: 'robot-1', symbol: 'ETH/USDT', direction: 'LONG', status: 'PAUSED', accountId: 'cred-1' });
+      (prisma.box as any).findMany = vi.fn().mockResolvedValue([]);
+      (prisma.box as any).create = vi.fn().mockResolvedValue({ id: 'newbox' });
+      getMarketConstraints.mockReturnValue(new Promise(() => {})); // 永不 resolve，模拟交易所 API 卡死
+
+      const tinySize = { direction: 'LONG', takeProfitPrice: 2800, mainGridCount: 200, mainGridStep: 2, mainGridPortionSize: 0.0000001, leverage: 20, stopLossGridCount: 4, stopLossGridStep: 2 };
+      const promise = svc.addBox('robot-1', tinySize as any);
+
+      await vi.advanceTimersByTimeAsync(10_000);
+      const res = await promise;
+
+      expect(res.id).toBe('newbox');
+    } finally {
+      vi.useRealTimers();
+    }
+  }, 2000);
+
+  it('editBox rejects order size below exchange minimum with BOX_ORDER_SIZE_BELOW_MINIMUM code', async () => {
+    const { svc, prisma, getMarketConstraints } = makeService();
+    ((prisma as any).robot).findUnique = vi.fn().mockResolvedValue({ id: 'robot-1', direction: 'LONG', activeBoxId: null, accountId: 'cred-1', symbol: 'ETH/USDT' });
+    (prisma.box as any).findFirst = vi.fn().mockResolvedValue({ id: 'box-1' });
+    (prisma.box as any).findMany = vi.fn().mockResolvedValue([]);
+    (prisma.box as any).update = vi.fn();
+    getMarketConstraints.mockResolvedValue({ minQty: 0.001, minNotional: 20 });
+
+    const tooSmall = { direction: 'LONG', takeProfitPrice: 2800, mainGridCount: 200, mainGridStep: 2, mainGridPortionSize: 0.005, leverage: 20, stopLossGridCount: 4, stopLossGridStep: 2 };
+    const err = await svc.editBox('robot-1', 'box-1', tooSmall as any).catch((e) => e);
+
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect((err.getResponse() as { code?: string }).code).toBe('BOX_ORDER_SIZE_BELOW_MINIMUM');
+    expect((prisma.box as any).update).not.toHaveBeenCalled();
+  });
+
   it('addBox rejects direction mismatch with BOX_DIRECTION_MISMATCH code', async () => {
     const { svc, prisma } = makeService();
     ((prisma as any).robot).findUnique = vi.fn().mockResolvedValue({ id: 'robot-1', symbol: 'ETH/USDT', direction: 'LONG', status: 'PAUSED', accountId: 'cred-1' });
@@ -984,7 +1112,7 @@ describe('BotManagerService', () => {
     const { svc, prisma } = makeService();
     ((prisma as any).robot).findFirst = vi.fn().mockResolvedValue(null); // no duplicate
     ((prisma as any).robot).create = vi.fn().mockResolvedValue({ id: 'robot-new' });
-    const res = await svc.createRobot({ credentialId: 'cred-1', symbol: 'ETH/USDT', direction: 'LONG', exchangeAccountId: 'uid-1' });
+    const res = await svc.createRobot({ credentialId: 'cred-1', symbol: 'ETH/USDT', direction: 'LONG', exchangeAccountId: 'uid-1', environment: 'demo' });
     expect(((prisma as any).robot).create).toHaveBeenCalled();
     const arg = ((prisma as any).robot).create.mock.calls[0][0];
     expect(arg.data.status).toBe('PAUSED');
@@ -996,7 +1124,7 @@ describe('BotManagerService', () => {
     const { svc, prisma } = makeService();
     ((prisma as any).robot).findFirst = vi.fn().mockResolvedValue({ id: 'existing', endedAt: null });
     ((prisma as any).robot).create = vi.fn();
-    await expect(svc.createRobot({ credentialId: 'cred-1', symbol: 'ETH/USDT', direction: 'LONG', exchangeAccountId: 'uid-1' }))
+    await expect(svc.createRobot({ credentialId: 'cred-1', symbol: 'ETH/USDT', direction: 'LONG', exchangeAccountId: 'uid-1', environment: 'demo' }))
       .rejects.toThrow(/already exists|已存在/i);
     expect(((prisma as any).robot).create).not.toHaveBeenCalled();
   });
@@ -1005,9 +1133,9 @@ describe('BotManagerService', () => {
     const { svc, prisma } = makeService();
     ((prisma as any).robot).findFirst = vi.fn().mockResolvedValue(null); // no duplicate
     ((prisma as any).robot).create = vi.fn().mockResolvedValue({ id: 'robot-noid' });
-    const res = await svc.createRobot({ credentialId: 'cred-1', symbol: 'ETH/USDT', direction: 'LONG', exchangeAccountId: 'uid-1' });
+    const res = await svc.createRobot({ credentialId: 'cred-1', symbol: 'ETH/USDT', direction: 'LONG', exchangeAccountId: 'uid-1', environment: 'demo' });
     expect(((prisma as any).robot).findFirst).toHaveBeenCalledWith({
-      where: { exchangeUid: 'uid-1', symbol: 'ETH/USDT', endedAt: null },
+      where: { exchangeUid: 'uid-1', environment: 'demo', symbol: 'ETH/USDT', endedAt: null },
     });
     expect(res.id).toBe('robot-noid');
   });
@@ -1020,7 +1148,7 @@ describe('BotManagerService', () => {
     ((prisma as any).robot).findFirst = vi.fn().mockResolvedValue(null);
     ((prisma as any).robot).create = vi.fn();
 
-    await expect(svc.createRobot({ credentialId: 'cred-1', symbol: 'ABCDEFGHI/USDT', direction: 'LONG', exchangeAccountId: 'uid-1' }))
+    await expect(svc.createRobot({ credentialId: 'cred-1', symbol: 'ABCDEFGHI/USDT', direction: 'LONG', exchangeAccountId: 'uid-1', environment: 'demo' }))
       .rejects.toMatchObject({ response: { code: 'SYMBOL_TOO_LONG_FOR_EXCHANGE' } });
     expect(((prisma as any).robot).create).not.toHaveBeenCalled();
   });
@@ -1031,14 +1159,14 @@ describe('BotManagerService', () => {
     ((prisma as any).robot).findFirst = vi.fn().mockResolvedValue(null);
     ((prisma as any).robot).create = vi.fn().mockResolvedValue({ id: 'robot-okx' });
 
-    const res = await svc.createRobot({ credentialId: 'cred-1', symbol: 'ABCDEFGHI/USDT', direction: 'LONG', exchangeAccountId: 'uid-1' });
+    const res = await svc.createRobot({ credentialId: 'cred-1', symbol: 'ABCDEFGHI/USDT', direction: 'LONG', exchangeAccountId: 'uid-1', environment: 'demo' });
     expect(res.id).toBe('robot-okx');
   });
 
   it('createRobot rejects an invalid direction', async () => {
     const { svc, prisma } = makeService();
     ((prisma as any).robot).create = vi.fn();
-    await expect(svc.createRobot({ credentialId: 'cred-1', symbol: 'ETH/USDT', direction: 'INVALID', exchangeAccountId: 'uid-1' }))
+    await expect(svc.createRobot({ credentialId: 'cred-1', symbol: 'ETH/USDT', direction: 'INVALID', exchangeAccountId: 'uid-1', environment: 'demo' }))
       .rejects.toBeInstanceOf(BadRequestException);
     expect(((prisma as any).robot).create).not.toHaveBeenCalled();
   });
@@ -1049,7 +1177,7 @@ describe('BotManagerService', () => {
       new BadRequestException({ code: 'SYMBOL_NOT_TRADABLE', message: 'x' }),
     );
     await expect(svc.createRobot({
-      credentialId: 'c1', exchangeAccountId: 'uid1', symbol: 'NOPE/USDT', direction: 'LONG',
+      credentialId: 'c1', exchangeAccountId: 'uid1', symbol: 'NOPE/USDT', direction: 'LONG', environment: 'demo',
     })).rejects.toMatchObject({ response: { code: 'SYMBOL_NOT_TRADABLE' } });
     expect(launcher.assertSymbolTradable).toHaveBeenCalledWith('c1', 'NOPE/USDT');
   });
@@ -1060,7 +1188,7 @@ describe('BotManagerService', () => {
     ((prisma as any).robot).findFirst = vi.fn().mockResolvedValue(null);
     ((prisma as any).robot).create = vi.fn().mockResolvedValue({ id: 'robot-ok' });
     const r = await svc.createRobot({
-      credentialId: 'c1', exchangeAccountId: 'uid1', symbol: 'BTC/USDT', direction: 'LONG',
+      credentialId: 'c1', exchangeAccountId: 'uid1', symbol: 'BTC/USDT', direction: 'LONG', environment: 'demo',
     });
     expect(r.id).toBeTruthy();
   });
@@ -1251,31 +1379,50 @@ describe('BotManagerService', () => {
       return { svc, findFirst, create };
     }
 
+    it('同账户同 symbol 但不同 environment：允许同时创建（demo 与 live 视为不同资源）', async () => {
+      const { svc, findFirst, create } = makeSvc(null);
+      await svc.createRobot({ credentialId: 'cred-1', symbol: 'ETH/USDT', direction: 'LONG', exchangeAccountId: 'acct-A', environment: 'demo' });
+      expect(findFirst).toHaveBeenCalledWith({
+        where: { exchangeUid: 'acct-A', environment: 'demo', symbol: 'ETH/USDT', endedAt: null },
+      });
+      expect(create).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ environment: 'demo' }),
+      }));
+    });
+
+    it('同账户同 symbol 同 environment：仍然拒绝（不变量本体不受影响）', async () => {
+      const { svc, create } = makeSvc({ id: 'existing' });
+      await expect(
+        svc.createRobot({ credentialId: 'cred-1', symbol: 'ETH/USDT', direction: 'LONG', exchangeAccountId: 'acct-A', environment: 'live' }),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(create).not.toHaveBeenCalled();
+    });
+
     it('拒绝同账户同 symbol 的活跃机器人', async () => {
       const { svc, findFirst, create } = makeSvc({ id: 'existing' });
-      const dupCall = svc.createRobot({ credentialId: 'cred-1', symbol: 'ETH/USDT', direction: 'LONG', exchangeAccountId: 'acct-A' });
+      const dupCall = svc.createRobot({ credentialId: 'cred-1', symbol: 'ETH/USDT', direction: 'LONG', exchangeAccountId: 'acct-A', environment: 'demo' });
       await expect(dupCall).rejects.toBeInstanceOf(ConflictException);
       await expect(dupCall).rejects.toThrow(/already exists/);
       expect(findFirst).toHaveBeenCalledWith({
-        where: { exchangeUid: 'acct-A', symbol: 'ETH/USDT', endedAt: null },
+        where: { exchangeUid: 'acct-A', environment: 'demo', symbol: 'ETH/USDT', endedAt: null },
       });
       expect(create).not.toHaveBeenCalled();
       const err = await svc
-        .createRobot({ credentialId: 'cred-1', symbol: 'ETH/USDT', direction: 'LONG', exchangeAccountId: 'acct-A' })
+        .createRobot({ credentialId: 'cred-1', symbol: 'ETH/USDT', direction: 'LONG', exchangeAccountId: 'acct-A', environment: 'demo' })
         .catch((e) => e);
       expect((err.getResponse() as { code?: string }).code).toBe('ROBOT_DUPLICATE');
     });
 
     it('允许同账户不同 symbol', async () => {
       const { svc, create } = makeSvc(null);
-      const r = await svc.createRobot({ credentialId: 'cred-1', symbol: 'BTC/USDT', direction: 'LONG', exchangeAccountId: 'acct-A' });
+      const r = await svc.createRobot({ credentialId: 'cred-1', symbol: 'BTC/USDT', direction: 'LONG', exchangeAccountId: 'acct-A', environment: 'demo' });
       expect(r.id).toBe('new-robot');
       expect(create).toHaveBeenCalled();
     });
 
     it('允许不同账户同 symbol', async () => {
       const { svc, create } = makeSvc(null);
-      await svc.createRobot({ credentialId: 'cred-2', symbol: 'ETH/USDT', direction: 'LONG', exchangeAccountId: 'acct-B' });
+      await svc.createRobot({ credentialId: 'cred-2', symbol: 'ETH/USDT', direction: 'LONG', exchangeAccountId: 'acct-B', environment: 'demo' });
       expect(create).toHaveBeenCalled();
     });
 
@@ -1297,7 +1444,7 @@ describe('BotManagerService', () => {
       );
       let caught: Error | undefined;
       await svc
-        .createRobot({ credentialId: 'cred-1', symbol: 'ETH/USDT', direction: 'LONG', exchangeAccountId: 'acct-A' })
+        .createRobot({ credentialId: 'cred-1', symbol: 'ETH/USDT', direction: 'LONG', exchangeAccountId: 'acct-A', environment: 'demo' })
         .catch((e) => { caught = e as Error; });
       expect(caught).toBeInstanceOf(ConflictException);
       expect(caught?.message).toMatch(/already exists on this account/);
@@ -1318,7 +1465,7 @@ describe('BotManagerService', () => {
         { getBoxesLedger: vi.fn().mockResolvedValue(new Map()) } as any,
       );
       await expect(
-        svc.createRobot({ credentialId: 'cred-1', symbol: 'ETH/USDT', direction: 'LONG', exchangeAccountId: 'acct-A' }),
+        svc.createRobot({ credentialId: 'cred-1', symbol: 'ETH/USDT', direction: 'LONG', exchangeAccountId: 'acct-A', environment: 'demo' }),
       ).rejects.toThrow(/db connection lost/);
     });
   });
@@ -1535,5 +1682,30 @@ describe('箱体刷新 single-flight：慢查询期间并发 tick 不得踩踏�
       const last = robotUpdate.mock.calls.at(-1)![0];
       expect(last.data).toEqual(expect.objectContaining({ status: 'STOPPED', lastPositionQty: 1 }));
     });
+  });
+});
+
+describe("environment passthrough", () => {
+  it("listRobots exposes account.environment as environment", async () => {
+    const { svc, prisma } = makeService();
+    (prisma.robot.findMany as any).mockResolvedValueOnce([
+      { id: "robot-1", symbol: "ETH/USDT", direction: "LONG", status: "RUNNING", activeBoxId: null,
+        account: { id: "cred-1", exchangeId: "binance", environment: "live", label: "Acc" },
+        stopStage: null, stopWarning: null,
+        lastPositionQty: null, lastEntryPrice: null, lastUnrealizedPnl: null, lastSnapshotAt: null },
+    ]);
+    const [row] = await svc.listRobots();
+    expect(row.environment).toBe("live");
+  });
+
+  it("getRobotDetail exposes account.environment as environment", async () => {
+    const { svc, prisma } = makeService();
+    (prisma.robot.findUnique as any).mockResolvedValueOnce({
+      id: "robot-1", symbol: "ETH/USDT", direction: "LONG", status: "RUNNING",
+      activeBoxId: null, realizedPnl: 0,
+      account: { id: "cred-1", exchangeId: "binance", environment: "live", label: "demo" },
+    });
+    const detail = await svc.getRobotDetail("robot-1");
+    expect(detail?.environment).toBe("live");
   });
 });

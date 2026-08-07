@@ -311,6 +311,21 @@ describe('ExchangeAdapterBridge', () => {
     expect(legacy.setMarginMode).toHaveBeenCalledWith('ETH/USDT', true);
   });
 
+  // 每次 runner 启动都会经桥接调用这两个方法，缺一个就是启动即 TypeError
+  it('should delegate getPositionMode to legacy adapter', async () => {
+    const legacy = createMockAdapter();
+    const bridge = new ExchangeAdapterBridge(legacy);
+    await expect(bridge.getPositionMode()).resolves.toBe(true);
+    expect(legacy.getPositionMode).toHaveBeenCalled();
+  });
+
+  it('should delegate setPositionMode to legacy adapter', async () => {
+    const legacy = createMockAdapter();
+    const bridge = new ExchangeAdapterBridge(legacy);
+    await bridge.setPositionMode(true);
+    expect(legacy.setPositionMode).toHaveBeenCalledWith(true);
+  });
+
   it('createAlgoOrder uses explicit triggerCondition when provided', async () => {
     const legacy = createMockAdapter();
     const bridge = new ExchangeAdapterBridge(legacy);

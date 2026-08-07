@@ -22,14 +22,17 @@ function arg(name: string, def?: string): string | undefined {
   return hit ? hit.slice(name.length + 3) : def;
 }
 
-function createAdapter(exchangeId: string, c: { apiKey: string; apiSecret: string; passphrase?: string; accountId: string }): IExchangeAdapter {
+function createAdapter(
+  exchangeId: string,
+  c: { apiKey: string; apiSecret: string; passphrase?: string; accountId: string; environment: "demo" | "live" },
+): IExchangeAdapter {
   switch (exchangeId) {
     case "binance":
-      return new BinanceAdapter({ apiKey: c.apiKey, apiSecret: c.apiSecret, accountId: c.accountId });
+      return new BinanceAdapter({ apiKey: c.apiKey, apiSecret: c.apiSecret, accountId: c.accountId, environment: c.environment });
     case "gateio":
-      return new GateioAdapter({ apiKey: c.apiKey, apiSecret: c.apiSecret, accountId: c.accountId });
+      return new GateioAdapter({ apiKey: c.apiKey, apiSecret: c.apiSecret, accountId: c.accountId, environment: c.environment });
     case "okx":
-      return new OkxAdapter({ apiKey: c.apiKey, apiSecret: c.apiSecret, passphrase: c.passphrase ?? "", accountId: c.accountId });
+      return new OkxAdapter({ apiKey: c.apiKey, apiSecret: c.apiSecret, passphrase: c.passphrase ?? "", accountId: c.accountId, environment: c.environment });
     default:
       throw new Error(`Unsupported exchange: ${exchangeId}`);
   }
@@ -109,6 +112,7 @@ async function main() {
     apiSecret: crypto.decrypt(robot.account.apiSecret),
     passphrase: robot.account.passphrase ? crypto.decrypt(robot.account.passphrase) : undefined,
     accountId: robot.account.accountId,
+    environment: robot.account.environment as "demo" | "live",
   });
 
   const exLayer = {

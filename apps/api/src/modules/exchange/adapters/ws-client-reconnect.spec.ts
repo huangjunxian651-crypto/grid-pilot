@@ -111,7 +111,7 @@ describe("WS 客户端断线后自动重连并恢复订阅", () => {
   it("OkxWsClient 重连后重发 subscribe", async () => {
     const { server, url } = await startLocalWsServer();
     const port = new URL(url).port;
-    const client = new OkxWsClient(credentials, url);
+    const client = new OkxWsClient(credentials, url, false);
     (client as unknown as { baseReconnectInterval: number }).baseReconnectInterval = 50;
 
     await client.connect();
@@ -200,7 +200,7 @@ describe("WS 客户端重连失败后重连链不中断", () => {
   it("OkxWsClient 多轮重连失败后服务恢复仍能重连并恢复订阅", async () => {
     const { server, url } = await startLocalWsServer();
     const port = new URL(url).port;
-    const client = new OkxWsClient(credentials, url);
+    const client = new OkxWsClient(credentials, url, false);
     (client as unknown as { baseReconnectInterval: number }).baseReconnectInterval = 50;
 
     await client.connect();
@@ -331,7 +331,7 @@ describe("WS 客户端重连失败后重连链不中断", () => {
 
 describe("WS 客户端重连失败时不崩溃进程", () => {
   it("OkxWsClient 重连失败不产生 unhandledRejection", async () => {
-    await expectNoUnhandledRejectionOnFailedReconnect((url) => new OkxWsClient(credentials, url));
+    await expectNoUnhandledRejectionOnFailedReconnect((url) => new OkxWsClient(credentials, url, false));
   });
 
   it("BinanceWsClient 重连失败不产生 unhandledRejection", async () => {

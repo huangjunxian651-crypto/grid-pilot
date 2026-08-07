@@ -15,6 +15,7 @@ import {
   stopLossIndexToSellPrice,
   validateBoxGeometry,
   predictActions,
+  minOrderSizeRequirement,
   type BoxGeometryConfig,
   type BoxTargetConfig,
 } from "../box-geometry";
@@ -595,5 +596,35 @@ describe("characterization: 定价映射全 index 快照（重构必须逐一不
         ],
       }
     `);
+  });
+});
+
+describe("minOrderSizeRequirement", () => {
+  it("按 minNotional/boxLowPrice 折算再按 stepSize 向上取整（用户给出的原始例子）", () => {
+    // 20 / 1800 = 0.01111...，stepSize=0.01 向上取整 → 0.02（不是未取整的 0.0111，也不是向下取整的 0.01）
+    const min = minOrderSizeRequirement(1800, { minQty: 0.001, minNotional: 20, stepSize: 0.01 });
+    expect(min).toBeCloseTo(0.02, 10);
+  });
+
+  it("minQty 比 minNotional 折算值更高时取 minQty，再按 stepSize 向上取整", () => {
+    // minNotional 折算 = 20/2000 = 0.01；minQty=0.015 更高 → 取 0.015，按 stepSize=0.01 向上取整 → 0.02
+    const min = minOrderSizeRequirement(2000, { minQty: 0.015, minNotional: 20, stepSize: 0.01 });
+    expect(min).toBeCloseTo(0.02, 10);
+  });
+
+  it("理论最小值恰好是 stepSize 整数倍时不多取整一级", () => {
+    // 20/2000 = 0.01，stepSize=0.01 的整数倍，向上取整应仍为 0.01
+    const min = minOrderSizeRequirement(2000, { minQty: 0.001, minNotional: 20, stepSize: 0.01 });
+    expect(min).toBeCloseTo(0.01, 10);
+  });
+
+  it("stepSize 为 0（交易所未提供步长信息）时不取整，直接返回理论最小值", () => {
+    const min = minOrderSizeRequirement(1800, { minQty: 0.001, minNotional: 20, stepSize: 0 });
+    expect(min).toBeCloseTo(20 / 1800, 10);
+  });
+
+  it("minNotional 为 0（交易所无此约束，如 Gate.io）时只看 minQty", () => {
+    const min = minOrderSizeRequirement(1800, { minQty: 0.01, minNotional: 0, stepSize: 0.001 });
+    expect(min).toBeCloseTo(0.01, 10);
   });
 });

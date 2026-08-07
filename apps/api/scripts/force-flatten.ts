@@ -10,7 +10,13 @@ const SYMBOL = 'ETH/USDT';
 async function main() {
   const prisma = new PrismaClient();
   const crypto = new CredentialCrypto(process.env.ENCRYPTION_KEY || '');
-  const accounts = await prisma.exchangeAccount.findMany({ where: { isActive: true } });
+  // 护栏：本脚本会真实撤单/强平，只允许触达 demo 账户，避免误伤 live 实盘持仓
+  const accounts = await prisma.exchangeAccount.findMany({ where: { isActive: true, environment: 'demo' } });
+
+  const liveCount = await prisma.exchangeAccount.count({ where: { isActive: true, environment: 'live' } });
+  if (liveCount > 0) {
+    console.warn(`SKIPPED ${liveCount} live-environment account(s) — this script only touches demo accounts by design. 如需清理 live 账户请手动确认后单独处理，本脚本不做。`);
+  }
 
   for (const acct of accounts) {
     const apiKey = crypto.isEncrypted(acct.apiKey) ? crypto.decrypt(acct.apiKey) : acct.apiKey;
@@ -19,10 +25,11 @@ async function main() {
       ? (crypto.isEncrypted(acct.passphrase) ? crypto.decrypt(acct.passphrase) : acct.passphrase)
       : '';
 
+    const environment = acct.environment as 'demo' | 'live';
     let adapter;
-    if (acct.exchangeId === 'binance') adapter = new BinanceAdapter({ apiKey, apiSecret, accountId: acct.id });
-    else if (acct.exchangeId === 'gateio') adapter = new GateioAdapter({ apiKey, apiSecret, accountId: acct.id });
-    else adapter = new OkxAdapter({ apiKey, apiSecret, passphrase, accountId: acct.id });
+    if (acct.exchangeId === 'binance') adapter = new BinanceAdapter({ apiKey, apiSecret, accountId: acct.id, environment });
+    else if (acct.exchangeId === 'gateio') adapter = new GateioAdapter({ apiKey, apiSecret, accountId: acct.id, environment });
+    else adapter = new OkxAdapter({ apiKey, apiSecret, passphrase, accountId: acct.id, environment });
 
     const result: Record<string, unknown> = { exchange: acct.exchangeId, label: acct.label };
     try {

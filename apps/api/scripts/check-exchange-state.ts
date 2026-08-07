@@ -20,10 +20,11 @@ async function main() {
       ? (crypto.isEncrypted(acct.passphrase) ? crypto.decrypt(acct.passphrase) : acct.passphrase)
       : '';
 
+    const environment = acct.environment as 'demo' | 'live';
     let adapter;
-    if (acct.exchangeId === 'binance') adapter = new BinanceAdapter({ apiKey, apiSecret, accountId: acct.id });
-    else if (acct.exchangeId === 'gateio') adapter = new GateioAdapter({ apiKey, apiSecret, accountId: acct.id });
-    else adapter = new OkxAdapter({ apiKey, apiSecret, passphrase, accountId: acct.id });
+    if (acct.exchangeId === 'binance') adapter = new BinanceAdapter({ apiKey, apiSecret, accountId: acct.id, environment });
+    else if (acct.exchangeId === 'gateio') adapter = new GateioAdapter({ apiKey, apiSecret, accountId: acct.id, environment });
+    else adapter = new OkxAdapter({ apiKey, apiSecret, passphrase, accountId: acct.id, environment });
 
     try {
       const pos = await adapter.fetchPosition(SYMBOL);
@@ -31,7 +32,7 @@ async function main() {
       console.log(JSON.stringify({
         exchange: acct.exchangeId,
         label: acct.label,
-        position: { qty: pos?.qty ?? 0, entryPrice: pos?.entryPrice ?? null, side: (pos as any)?.side ?? null },
+        position: { qty: pos?.qty ?? 0, entryPrice: pos?.avgCost ?? null, side: (pos as any)?.side ?? null },
         openOrders: orders.length,
         orderSample: orders.slice(0, 5).map((o) => ({ id: o.orderId, side: o.side, price: o.price, status: o.status })),
       }));

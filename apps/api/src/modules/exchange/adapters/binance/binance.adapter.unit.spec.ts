@@ -1,11 +1,43 @@
 // binance.adapter.unit.spec.ts — Binance adapter unit tests with nock
 // Intercepts all HTTP requests to Binance Testnet, no live network calls
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import nock from "nock";
-import { BinanceAdapter } from "./binance.adapter";
 import { ExchangeError, ErrorCategory } from "../../interfaces/exchange-adapter.interface";
-import { BINANCE_REST_TESTNET } from "./binance.types";
+import { BINANCE_REST_TESTNET, BINANCE_REST_LIVE } from "./binance.types";
+
+// 在模块边界 mock WS client：可控假客户端，记录构造函数收到的 environment 参数，
+// 用于验证 BinanceAdapter 创建 BinanceWsClient 时是否透传了 this.environment
+// （与 gateio.adapter.spec.ts 的 FakeGateioWsClient 同一模式）。此文件其余测试全部
+// 走 REST（nock），不会构造 BinanceWsClient，故此 mock 不影响既有用例。
+const h = vi.hoisted(() => {
+  const wsInstances: Array<{
+    handlers: Record<string, Array<(a: unknown) => void>>;
+    environment: unknown;
+    emit: (ev: string, a: unknown) => void;
+  }> = [];
+  class FakeBinanceWsClient {
+    handlers: Record<string, Array<(a: unknown) => void>> = {};
+    environment: unknown;
+    constructor(_credentials: unknown, _isUserDataStream?: unknown, environment?: unknown) {
+      this.environment = environment;
+      wsInstances.push(this);
+    }
+    async connect() {}
+    on(ev: string, fn: (a: unknown) => void) {
+      (this.handlers[ev] ??= []).push(fn);
+    }
+    off() {}
+    disconnect() {}
+    emit(ev: string, arg: unknown) {
+      (this.handlers[ev] ?? []).forEach((fn) => fn(arg));
+    }
+  }
+  return { wsInstances, FakeBinanceWsClient };
+});
+vi.mock("./binance-ws-client", () => ({ BinanceWsClient: h.FakeBinanceWsClient }));
+
+import { BinanceAdapter } from "./binance.adapter";
 
 const BASE_URL = BINANCE_REST_TESTNET;
 
@@ -815,5 +847,79 @@ describe("BinanceAdapter", () => {
     await adapter.fetchFundingHistory!("ETH/USDT", 1000);
     expect(capturedQuery.startTime).toBe("1000");
     expect(capturedQuery.endTime).toBeUndefined();
+  });
+});
+
+describe("BinanceAdapter environment routing", () => {
+  afterEach(() => nock.cleanAll());
+
+  it("demo (default) targets BINANCE_REST_TESTNET", async () => {
+    const adapter = new BinanceAdapter({ apiKey: "k", apiSecret: "s", accountId: "a" });
+    nock(BINANCE_REST_TESTNET).get("/fapi/v1/exchangeInfo").query(matchAnyQuery).reply(200, { symbols: [] });
+    await expect(adapter.getMarketInfo("ETH/USDT")).rejects.toThrow(); // symbols 为空必然找不到，只关心命中了哪个 host
+    adapter.destroy();
+  });
+
+  it("live targets BINANCE_REST_LIVE, not BINANCE_REST_TESTNET", async () => {
+    const adapter = new BinanceAdapter({ apiKey: "k", apiSecret: "s", accountId: "a", environment: "live" });
+    const liveScope = nock(BINANCE_REST_LIVE)
+      .get("/fapi/v1/exchangeInfo")
+      .query(matchAnyQuery)
+      .reply(200, {
+        symbols: [{ symbol: "ETHUSDT", contractType: "PERPETUAL", pricePrecision: 2, quantityPrecision: 3, filters: [] }],
+      });
+    nock(BINANCE_REST_LIVE)
+      .get("/fapi/v1/commissionRate")
+      .query(matchAnyQuery)
+      .reply(200, { symbol: "ETHUSDT", makerCommissionRate: "0.0002", takerCommissionRate: "0.0005" });
+    await adapter.getMarketInfo("ETH/USDT");
+    expect(liveScope.isDone()).toBe(true);
+    adapter.destroy();
+  });
+});
+
+describe("BinanceAdapter → BinanceWsClient environment 透传", () => {
+  beforeEach(() => {
+    h.wsInstances.length = 0;
+  });
+
+  it('environment: "live" 透传给 watchOrderFills 创建的 BinanceWsClient', async () => {
+    const adapter = new BinanceAdapter({ apiKey: "k", apiSecret: "s", accountId: "a", environment: "live" });
+
+    const collect = (async () => {
+      for await (const _f of adapter.watchOrderFills("ETH/USDT")) {
+        break;
+      }
+    })();
+
+    await new Promise((r) => setTimeout(r, 0));
+    const ws = h.wsInstances[h.wsInstances.length - 1];
+    expect(ws.environment).toBe("live");
+
+    ws.emit("ORDER_TRADE_UPDATE", {
+      o: { i: 1, c: "c", s: "ETHUSDT", S: "BUY", l: "1", L: "2000", t: 1, n: "0.1", N: "USDT", X: "FILLED" },
+    });
+    await collect;
+    adapter.destroy();
+  });
+
+  it('environment 缺省 → watchOrderFills 创建的 BinanceWsClient 收到 "demo"', async () => {
+    const adapter = new BinanceAdapter({ apiKey: "k", apiSecret: "s", accountId: "a" });
+
+    const collect = (async () => {
+      for await (const _f of adapter.watchOrderFills("ETH/USDT")) {
+        break;
+      }
+    })();
+
+    await new Promise((r) => setTimeout(r, 0));
+    const ws = h.wsInstances[h.wsInstances.length - 1];
+    expect(ws.environment).toBe("demo");
+
+    ws.emit("ORDER_TRADE_UPDATE", {
+      o: { i: 1, c: "c", s: "ETHUSDT", S: "BUY", l: "1", L: "2000", t: 1, n: "0.1", N: "USDT", X: "FILLED" },
+    });
+    await collect;
+    adapter.destroy();
   });
 });

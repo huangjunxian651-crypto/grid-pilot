@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { ConflictException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { CredentialService } from './credential.service';
 import { CredentialCrypto } from './credential-crypto';
 
@@ -111,6 +113,68 @@ describe('CredentialService encryption', () => {
       await service.update('c1', { passphrase: '' } as any);
       const decrypted = await service.findOneWithSecrets('c1');
       expect(decrypted.passphrase == null || decrypted.passphrase === '').toBe(true);
+    });
+  });
+
+  describe("environment field", () => {
+    it("create persists environment as-is", async () => {
+      await service.create({ exchangeId: "binance", accountId: "a", label: "l", apiKey: "K", apiSecret: "S", environment: "live" } as any);
+      const row = prisma._store["c1"];
+      expect(row.environment).toBe("live");
+    });
+
+    it("findAll exposes environment", async () => {
+      await service.create({ exchangeId: "binance", accountId: "a", label: "l", apiKey: "K", apiSecret: "S", environment: "live" } as any);
+      const all = await service.findAll();
+      expect(all[0].environment).toBe("live");
+    });
+
+    it("findOneMasked exposes environment", async () => {
+      await service.create({ exchangeId: "binance", accountId: "a", label: "l", apiKey: "K", apiSecret: "S", environment: "demo" } as any);
+      const got = await service.findOneMasked("c1");
+      expect(got.environment).toBe("demo");
+    });
+
+    // 防御性：environment 目前之所以锁定，是因为 UpdateCredentialDto 没有该字段 + 全局
+    // ValidationPipe({whitelist:true}) 静默剔除未知字段。这条测试绕过控制器/DTO/管道，
+    // 直接调用 service.update()，用于证明服务层自身也拒绝写入 environment ——
+    // 不依赖那一层管道配置（纵深防御的第二层）。
+    it("update() 直接调用（绕过 DTO/ValidationPipe）也不会改写 environment", async () => {
+      await service.create({ exchangeId: "binance", accountId: "a", label: "l", apiKey: "K", apiSecret: "S", environment: "demo" } as any);
+      await service.update("c1", { environment: "live", label: "x" } as any);
+      const row = prisma._store["c1"];
+      expect(row.environment).toBe("demo");
+      expect(row.label).toBe("x");
+    });
+  });
+
+  describe("create() duplicate (exchangeId+accountId+environment) 唯一约束冲突", () => {
+    it("Prisma P2002 时抛 ConflictException，code=CREDENTIAL_DUPLICATE", async () => {
+      const p2002 = new Prisma.PrismaClientKnownRequestError(
+        "Unique constraint failed on the constraint: `ExchangeAccount_exchangeId_accountId_environment_key`",
+        { code: "P2002", clientVersion: "5.22.0" },
+      );
+      prisma.exchangeAccount.create = async () => { throw p2002; };
+
+      let caught: unknown;
+      await service
+        .create({ exchangeId: "okx", accountId: "a", label: "l", apiKey: "K", apiSecret: "S", environment: "live" } as any)
+        .catch((e) => { caught = e; });
+
+      expect(caught).toBeInstanceOf(ConflictException);
+      expect(((caught as ConflictException).getResponse() as { code?: string }).code).toBe("CREDENTIAL_DUPLICATE");
+    });
+
+    it("非 P2002 的 create 错误原样抛出", async () => {
+      const dbError = new Error("db connection lost");
+      prisma.exchangeAccount.create = async () => { throw dbError; };
+
+      let caught: unknown;
+      await service
+        .create({ exchangeId: "okx", accountId: "a", label: "l", apiKey: "K", apiSecret: "S", environment: "live" } as any)
+        .catch((e) => { caught = e; });
+
+      expect(caught).toBe(dbError);
     });
   });
 });

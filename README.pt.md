@@ -29,13 +29,13 @@ Em comparação com "comprar e segurar": comprar e segurar só gera lucro quando
 ## 🤔 Antes de usar uma grade, faça a si mesmo estas cinco perguntas
 
 **O preço ainda está caindo — por que a grade já quer montar a posição inteira no topo?**
-A grade nativa abre posição assim que o preço entra na faixa. O GridPilot faz **entrada com trailing**: primeiro persegue o ponto baixo e só entra após um repique de 0,2% confirmar que o mercado se estabilizou — sem tentar adivinhar o fundo, sem ficar segurando o abacaxi no topo.
+A grade nativa abre posição assim que o preço entra na faixa. O GridPilot faz **entrada com trailing**: primeiro persegue o ponto baixo e só entra após um repique de 0,2% confirmar que o mercado se estabilizou — sem tentar adivinhar o fundo, sem ficar segurando o abacaxi no topo. (Só rastreia quando o preço entra na janela de ativação na direção da perda; se voltar a subir para dentro da faixa vindo de um nível mais fundo, pula o trailing e começa a rodar direto.)
 
 **O mercado muda a cada segundo — por que suas ordens ficam penduradas sem se mexer?**
-O GridPilot redecide a cada atualização de preço: cancela o que deve, modifica o que deve, e em certos momentos pode não haver nenhuma ordem no book; se o preço está desfavorável, prefere recusar a ordem a perseguir o mercado — vai de Maker (0,02%) sempre que possível, nunca paga Taker (0,05%) de graça.
+O GridPilot redecide a cada atualização de preço: cancela o que deve, modifica o que deve, e em certos momentos pode não haver nenhuma ordem no book; quando o preço é favorável, persegue o book para travar o melhor preço; quando é desfavorável, prefere disparar o circuit breaker e recusar a ordem — vai de Maker (0,02%) sempre que possível, nunca paga Taker (0,05%) de graça. Essa perseguição não tem risco de queda: se o preço continuar caindo além do preço da grade, o bot persegue e compra ainda mais barato; se ele recuar sem romper a linha de cima, a ordem ainda pode ser executada no preço original — segundo um modelo padrão de ruína do apostador (gambler's ruin), a probabilidade de realmente perder a execução é desprezível — o lucro extra é de graça, e perdê-lo não custa nada.
 
 **O preço salta 5–10 USDT de uma vez — sua grade só sabe olhar?**
-Ordens estáticas só capturam o preço morto das linhas de grade. Quando o spread supera 2× a taxa de execução ativa, o GridPilot toma a liquidez a mercado e trava no bolso o lucro extra do salto além do passo da grade — na prática, quanto mais "irregular" o livro de ofertas da corretora, maior o lucro excedente.
+Ordens estáticas só capturam o preço morto das linhas de grade. Quando o preço se desvia do preço teórico da grade além de um limiar (padrão 0,1% ≈ 2× a taxa de execução ativa, ajustável), o GridPilot toma a liquidez ativamente e trava no bolso o lucro extra do salto além do passo da grade — na prática, quanto mais "irregular" o livro de ofertas da corretora, maior o lucro excedente.
 
 **Foi só um rompimento rápido para baixo — por que liquidar a posição inteira a mercado de uma vez?**
 Zerar tudo de uma vez paga taxa de Taker e ainda abre mão do repique. O GridPilot **reduz a posição nível a nível com ordens limitadas** dentro da zona de amortecimento do stop; se o preço repicar, a posição residual volta a lucrar na hora. Só se romper a linha de liquidação é que uma última ordem condicional de segurança assume de uma vez.
@@ -48,8 +48,8 @@ O GridPilot permite pré-configurar várias faixas que não se sobrepõem: em qu
 | Dimensão | Grade nativa da corretora | GridPilot |
 |------|----------------|-----------|
 | **Forma de decidir** | Ordens estáticas em lote, imóveis após colocadas | Acompanhamento automatizado: a cada atualização de preço reavalia antes de colocar/modificar/cancelar ordens dinamicamente; em qualquer instante pode não haver ordem ativa |
-| **Qualidade de execução** | Ordens estáticas só capturam o preço das linhas de grade; o lucro extra dos saltos passa ao lado | Persegue o melhor bid/ask para travar o melhor preço; toma a liquidez quando o spread supera 2× a taxa, travando o lucro excedente; recusa a ordem se o preço está desfavorável |
-| **Momento de abrir posição** | Abre a posição assim que entra na faixa | Entrada com trailing: persegue o ponto baixo e só abre posição após confirmar um repique de 0,2% |
+| **Qualidade de execução** | Ordens estáticas só capturam o preço das linhas de grade; o lucro extra dos saltos passa ao lado | Ancorado no book para travar o melhor preço, com execução nunca pior que o preço teórico; quando o preço se desvia do teórico além do limiar (padrão ≈2× a taxa), toma a liquidez ativamente para travar o lucro excedente; com preço desfavorável, o circuit breaker recusa a ordem |
+| **Momento de abrir posição** | Abre a posição assim que entra na faixa | Entrada com trailing: ao entrar na direção da perda, persegue o ponto baixo e só abre posição após confirmar um repique (padrão 0,2%) |
 | **Stop loss** | Liquidação total de uma só vez a mercado em um único preço | Redução nível a nível com ordens limitadas na zona de amortecimento; no repique, a posição residual se beneficia diretamente; a linha de liquidação mantém uma ordem condicional de segurança |
 | **Adaptação ao mercado** | Faixa única e fixa | Múltiplas faixas que não se sobrepõem; o preço ativa a faixa em que entra e as demais ficam dormentes |
 
@@ -65,7 +65,7 @@ O GridPilot permite pré-configurar várias faixas que não se sobrepõem: em qu
 
 ## 💰 Entenda as taxas e economize com código de convite ao se cadastrar (patrocinador rebateto.me)
 
-As taxas são cobradas pelas corretoras, e o **GridPilot não fica com nenhum centavo**. Numa mesma operação, ordem passiva (Maker) ≈0,02% e ordem ativa (Taker) ≈0,05%. Com alavancagem e grade de alta frequência, as taxas vão sendo silenciosamente ampliadas e, acumuladas dia após dia, não são pouca coisa — por padrão, o GridPilot coloca ordens Maker por você, economizando cerca de 0,03% por operação, e só toma a liquidez ativamente quando a oportunidade é fugaz.
+As taxas são cobradas pelas corretoras, e o **GridPilot não fica com nenhum centavo**. Numa mesma operação, ordem passiva (Maker) ≈0,02% e ordem ativa (Taker) ≈0,05%. No dia a dia, as ordens de grade dos dois lados na verdade são todas Maker — não há diferença de taxa nas execuções rotineiras da grade. A vantagem do GridPilot nas taxas aparece em três momentos-chave: ① **na entrada** — coloca a ordem limitada depois da confirmação do repique, em vez de abrir a mercado assim que entra na faixa; ② **no stop** — reduz nível a nível com ordens limitadas, em vez de zerar tudo a mercado de uma vez; ③ **na tomada de liquidez** — só permite ir de Taker quando o lucro excedente realmente cobre a taxa.
 
 E vai além: **ao preencher um código de rebate ao se cadastrar na corretora, você passa a receber de volta cerca de 20% (Gate 40%) das taxas já pagas, de forma contínua e automática** — é como dar mais um desconto em cada operação.
 
@@ -133,20 +133,22 @@ pnpm dev:skip-infra   # API + Web, sem docker
 ## 🕹️ Instruções de uso
 
 1. **Conecte a corretora**: insira a API Key/Secret nas configurações. **Conceda apenas a permissão de negociação de contratos; jamais habilite a permissão de saque.**
-2. **Configure a grade**: escolha o par de negociação e a faixa de preço, defina o número de níveis da grade principal, o passo, a quantidade por nível, a alavancagem, o amortecimento de stop loss e os parâmetros de entrada com trailing.
+2. **Configure a grade**: escolha o par de negociação e a direção (comprado/vendido), defina a âncora de preço de take profit, o número de níveis e o passo da grade principal, a quantidade por nível, a alavancagem, o amortecimento de stop loss e os parâmetros de entrada com trailing (os limites do range são derivados automaticamente da âncora de take profit + número de níveis e passo).
 3. **Inicie o robô**: entre na entrada com trailing → execução; o front-end exibe em tempo real cotações, ordens, execuções e a máquina de estados.
-4. **Monitoramento e encerramento**: ao acionar o take profit, para de aumentar a posição e encerra; ao acionar o amortecimento de stop loss, reduz a posição em camadas.
+4. **Monitoramento e encerramento**: quando o preço chega à extremidade do take profit, a grade vai fechando nível a nível e encerra naturalmente; com a posição zerada, sai pelo take profit. Se cair na zona de amortecimento de stop loss, reduz dinamicamente nível a nível.
 
 Parâmetros principais:
 
 | Parâmetro | Descrição |
 |------|------|
 | `takeProfitPrice` | Preço de take profit (limite superior do range) |
+| `direction` | Direção: LONG (comprado) / SHORT (vendido) |
 | `mainGridCount` / `mainGridStep` | Número de níveis da grade principal / passo de cada nível (USDT) |
 | `mainGridPortionSize` | Quantidade por ordem em cada nível |
 | `leverage` | Múltiplo de alavancagem |
 | `stopLossGridCount` / `stopLossGridStep` | Número de níveis / passo da zona de amortecimento de stop loss |
-| `activationPrice` / `trailingCallbackRate` | Preço de ativação da entrada com trailing / amplitude de callback |
+| `isolationStep` | Largura da faixa de isolamento (padrão = passo da zona de stop) |
+| `activationPrice` / `trailingCallbackRate` | Preço de ativação da faixa (padrão: ponto médio da grade principal) / amplitude de callback da entrada com trailing |
 | `excessProfitMultiplier` | Múltiplo de disparo da faixa GTC (limiar de lucro excedente) |
 
 Os parâmetros completos estão em [`docs/STRATEGY_SPEC.md`](docs/STRATEGY_SPEC.md).

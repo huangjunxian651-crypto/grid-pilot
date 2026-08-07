@@ -31,13 +31,14 @@ model ExchangeAccount {
   apiKey      String
   apiSecret   String
   passphrase  String?
+  environment String   @default("demo") // "demo" | "live"
   isActive    Boolean  @default(true)
   exchangeUid String?
   createdAt   DateTime @default(now())
   boxes       Box[]
   robots      Robot[]
 
-  @@unique([exchangeId, accountId])
+  @@unique([exchangeId, accountId, environment])
 }
 
 model Robot {
@@ -45,6 +46,7 @@ model Robot {
   accountId   String
   account     ExchangeAccount @relation(fields: [accountId], references: [id])
   exchangeUid String?
+  environment String          @default("demo")
   symbol      String
   direction   String
   status      String          @default("PAUSED")

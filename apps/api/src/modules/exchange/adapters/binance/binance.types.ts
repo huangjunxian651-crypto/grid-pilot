@@ -21,6 +21,9 @@ export const BINANCE_SYMBOL = "ETHUSDT";
 // Demo:    https://demo-fapi.binance.com (uses real account keys, simulated funds)
 export const BINANCE_REST_DEMO = "https://demo-fapi.binance.com";
 export const BINANCE_WS_DEMO = "wss://stream.binancefuture.com";
+// Live (real funds) endpoints
+export const BINANCE_REST_LIVE = "https://fapi.binance.com";
+export const BINANCE_WS_LIVE = "wss://fstream.binance.com";
 
 // Deprecated aliases for backward compatibility
 /** @deprecated Use BINANCE_REST_DEMO instead */

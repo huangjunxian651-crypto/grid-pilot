@@ -77,6 +77,47 @@ describe("box-form-model", () => {
     expect(errs.activation?.key).toBe("robot.activation_range_error");
   });
 
+  it("boxFormErrors：每格量按箱体最低价折算名义价值不足 minNotional 时返回 orderSize 错误", () => {
+    // takeProfitPrice=2800, count=200, step=2, isolation=2, slCount=4, slStep=2
+    // → boxLowPrice = 2800 - 400 - 2 - 8 = 2390；0.005 × 2390 = 11.95 < 20
+    const v = { ...emptyBoxFormValue(), takeProfitPrice: "2800", mainGridCount: "200",
+      mainGridStep: "2", stopLossGridStep: "2", mainGridPortionSize: "0.005" };
+    const errs = boxFormErrors(v, "LONG", { minQty: 0.001, minNotional: 20, stepSize: 0.01 });
+    expect(errs.orderSize?.key).toBe("robot.order_size_below_minimum");
+  });
+
+  it("boxFormErrors：每格量在箱体最低价上仍满足 minNotional 时不报 orderSize 错误", () => {
+    // 0.05 × 2390 = 119.5 ≥ 20
+    const v = { ...emptyBoxFormValue(), takeProfitPrice: "2800", mainGridCount: "200",
+      mainGridStep: "2", stopLossGridStep: "2", mainGridPortionSize: "0.05" };
+    const errs = boxFormErrors(v, "LONG", { minQty: 0.001, minNotional: 20, stepSize: 0.01 });
+    expect(errs.orderSize).toBeNull();
+  });
+
+  it("boxFormErrors：理论最小值须按 stepSize 向上取整——防止交易所下单截断后又跌破门槛", () => {
+    // takeProfitPrice=2200, count=200, step=2 → boxLowPrice=1800；20/1800=0.01111（理论最小）。
+    // 0.015 能通过未取整的旧校验（0.015×1800=27≥20），但交易所会把 0.015 向下截断到
+    // stepSize=0.01 的整数倍即 0.01，执行时名义价值只有 18＜20——必须拒绝。
+    const v = { ...emptyBoxFormValue(), takeProfitPrice: "2200", mainGridCount: "200",
+      mainGridStep: "2", stopLossGridCount: "0", stopLossGridStep: "0", mainGridPortionSize: "0.015" };
+    const errs = boxFormErrors(v, "LONG", { minQty: 0.001, minNotional: 20, stepSize: 0.01 });
+    expect(errs.orderSize?.key).toBe("robot.order_size_below_minimum");
+  });
+
+  it("boxFormErrors：达到 stepSize 向上取整后的真实下限（0.02）时通过", () => {
+    const v = { ...emptyBoxFormValue(), takeProfitPrice: "2200", mainGridCount: "200",
+      mainGridStep: "2", stopLossGridCount: "0", stopLossGridStep: "0", mainGridPortionSize: "0.02" };
+    const errs = boxFormErrors(v, "LONG", { minQty: 0.001, minNotional: 20, stepSize: 0.01 });
+    expect(errs.orderSize).toBeNull();
+  });
+
+  it("boxFormErrors：不传 marketConstraints（拉取失败降级）时不报 orderSize 错误", () => {
+    const v = { ...emptyBoxFormValue(), takeProfitPrice: "2800", mainGridCount: "200",
+      mainGridStep: "2", stopLossGridStep: "2", mainGridPortionSize: "0.0000001" };
+    const errs = boxFormErrors(v, "LONG");
+    expect(errs.orderSize).toBeNull();
+  });
+
   it("boxFormValueFromRecommendation 把推荐参数映射为表单值字符串", () => {
     const v = boxFormValueFromRecommendation({
       takeProfitPrice: 2700, mainGridCount: 30, mainGridStep: 10, mainGridPortionSize: 0.05,

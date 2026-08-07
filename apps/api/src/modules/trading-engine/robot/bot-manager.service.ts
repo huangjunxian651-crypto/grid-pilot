@@ -5,7 +5,7 @@ import type { StopOutcome, TerminalReason } from '../trading-engine.service';
 import { RobotScheduler } from './robot-scheduler';
 import type { BoxCandidate, EntryMode } from './decide-box-activation';
 import { decideBoxActivation } from './decide-box-activation';
-import { deriveBoxLines } from '@gridpilot/shared-types';
+import { deriveBoxLines, type ExchangeEnvironment } from '@gridpilot/shared-types';
 import { validateBoxAddition, type BoxSpec } from './validate-box-addition';
 import { throwBoxValidationError } from './box-error-code';
 import { SYMBOL_TOKEN_LIMIT_BY_EXCHANGE } from '../../exchange/adapters/utils';
@@ -30,6 +30,8 @@ export interface RunnerLauncher {
   setOnBoxTerminated(cb: (robotId: string, configId: string) => void | Promise<void>): void;
   /** 校验 symbol 在该账户交易所可交易；不可交易抛 SYMBOL_NOT_TRADABLE，网络等不确定错误放行。 */
   assertSymbolTradable(credentialId: string, symbol: string): Promise<void>;
+  /** 拉取交易所最小下单量约束，供箱体保存前预校验；拉取失败返回 null（降级放行）。 */
+  getMarketConstraints(credentialId: string, symbol: string): Promise<{ minQty: number; minNotional: number; stepSize: number } | null>;
 }
 
 /** 公共行情订阅源。subscribe 返回退订函数。 */
@@ -42,6 +44,7 @@ export interface CreateRobotInput {
   symbol: string;
   direction: string;
   exchangeAccountId: string;
+  environment: ExchangeEnvironment;
 }
 
 export interface AddBoxInput {
@@ -94,6 +97,7 @@ export interface RobotSummary {
   managed: boolean;
   latestPrice: number | undefined;
   exchangeId: string;
+  environment: string;
   accountLabel: string;
   credentialId: string;
   boxCount: number;
@@ -104,6 +108,8 @@ export interface RobotSummary {
   totalPnl: number | null;
   activeBoxHighPrice: number | null;
   activeBoxLowPrice: number | null;
+  /** 活跃箱杠杆；前端据此算「盈亏 ÷ 占用保证金」。无活跃箱时为 null（前端不显示百分比）。 */
+  activeBoxLeverage: number | null;
   stopStage: string | null;
   stopWarning: string | null;
   lastPositionQty: number | null;
@@ -154,6 +160,9 @@ export class BotManagerService implements OnApplicationBootstrap {
    * 发起 findMany（时间戳在查询完成后才写），把连接池踩踏到上限。 */
   private boxRefreshInFlight = new Map<string, Promise<void>>();
   private static readonly BOX_CACHE_TTL_MS = 3000;
+  /** addBox/editBox 保存路径上等待交易所最小下单量约束的上限——这是弹窗内的同步保存操作，
+   * 用户对等待的容忍度远低于建 robot 那种一次性流程，不能沿用 axios 默认的 30s 超时。 */
+  private static readonly MARKET_CONSTRAINTS_TIMEOUT_MS = 6000;
   private unsubscribers = new Map<string, () => void>();
   private latestPrice = new Map<string, number>();
   /** 恢复/重启恢复活跃箱后，待在首个有价 tick 复核"价格是否已离开该箱窗口"（item2）。 */
@@ -215,16 +224,18 @@ export class BotManagerService implements OnApplicationBootstrap {
   async listRobots(): Promise<RobotSummary[]> {
     const rows = await this.prisma.robot.findMany({
       where: { endedAt: null },
-      include: { account: { select: { id: true, exchangeId: true, label: true } } },
+      include: { account: { select: { id: true, exchangeId: true, environment: true, label: true } } },
     });
     return this.assembleRobotSummaries(rows);
   }
 
-  /** 归档机器人列表：endedAt 非空（已终态），只读供历史查看。 */
+  /** 归档机器人列表：endedAt 非空（已终态），只读供历史查看。按 endedAt 降序——归档后行
+   * 只读不再变化，endedAt 即最后更新时间，最近归档的排最前。 */
   async listArchivedRobots(): Promise<RobotSummary[]> {
     const rows = await this.prisma.robot.findMany({
       where: { endedAt: { not: null } },
-      include: { account: { select: { id: true, exchangeId: true, label: true } } },
+      orderBy: { endedAt: 'desc' },
+      include: { account: { select: { id: true, exchangeId: true, environment: true, label: true } } },
     });
     return this.assembleRobotSummaries(rows);
   }
@@ -234,7 +245,7 @@ export class BotManagerService implements OnApplicationBootstrap {
     rows: Array<{
       id: string; symbol: string; direction: string; status: string;
       activeBoxId: string | null;
-      account: { id: string; exchangeId: string; label: string };
+      account: { id: string; exchangeId: string; environment: string; label: string };
       stopStage: string | null; stopWarning: string | null;
       lastPositionQty: number | null; lastEntryPrice: number | null;
       lastUnrealizedPnl: number | null; lastSnapshotAt: Date | null;
@@ -244,12 +255,12 @@ export class BotManagerService implements OnApplicationBootstrap {
     // 批量取所有箱体 + 成交(3 查询,避免 per-robot N+1)
     const robotIds = rows.map((r) => r.id);
     const boxes = robotIds.length
-      ? await this.prisma.box.findMany({ where: { robotId: { in: robotIds }, deletedAt: null }, select: { id: true, robotId: true, takeProfitPrice: true, mainGridStep: true, mainGridCount: true, stopLossGridCount: true, stopLossGridStep: true, isolationStep: true } })
+      ? await this.prisma.box.findMany({ where: { robotId: { in: robotIds }, deletedAt: null }, select: { id: true, robotId: true, takeProfitPrice: true, mainGridStep: true, mainGridCount: true, stopLossGridCount: true, stopLossGridStep: true, isolationStep: true, leverage: true } })
       : [];
     const boxesByRobot = new Map<string, string[]>();
-    const boxById = new Map<string, { takeProfitPrice: number; mainGridStep: number; mainGridCount: number; stopLossGridCount: number; stopLossGridStep: number; isolationStep: number | null }>();
-    for (const b of boxes as Array<{ id: string; robotId: string | null; takeProfitPrice: number; mainGridStep: number; mainGridCount: number; stopLossGridCount: number; stopLossGridStep: number; isolationStep: number | null }>) {
-      boxById.set(b.id, { takeProfitPrice: b.takeProfitPrice, mainGridStep: b.mainGridStep, mainGridCount: b.mainGridCount, stopLossGridCount: b.stopLossGridCount, stopLossGridStep: b.stopLossGridStep, isolationStep: b.isolationStep });
+    const boxById = new Map<string, { takeProfitPrice: number; mainGridStep: number; mainGridCount: number; stopLossGridCount: number; stopLossGridStep: number; isolationStep: number | null; leverage: number }>();
+    for (const b of boxes as Array<{ id: string; robotId: string | null; takeProfitPrice: number; mainGridStep: number; mainGridCount: number; stopLossGridCount: number; stopLossGridStep: number; isolationStep: number | null; leverage: number }>) {
+      boxById.set(b.id, { takeProfitPrice: b.takeProfitPrice, mainGridStep: b.mainGridStep, mainGridCount: b.mainGridCount, stopLossGridCount: b.stopLossGridCount, stopLossGridStep: b.stopLossGridStep, isolationStep: b.isolationStep, leverage: b.leverage });
       if (!b.robotId) continue;
       const arr = boxesByRobot.get(b.robotId) ?? [];
       arr.push(b.id);
@@ -285,6 +296,7 @@ export class BotManagerService implements OnApplicationBootstrap {
         managed: this.schedulers.has(r.id),
         latestPrice: this.latestPrice.get(r.id),
         exchangeId: r.account.exchangeId,
+        environment: r.account.environment,
         accountLabel: r.account.label,
         credentialId: r.account.id,
         boxCount: cfgIds.length,
@@ -299,6 +311,7 @@ export class BotManagerService implements OnApplicationBootstrap {
         activeBoxLowPrice: activeBox
           ? deriveBoxLines({ ...activeBox, direction: r.direction as 'LONG' | 'SHORT', isolationStep: activeBox.isolationStep ?? activeBox.stopLossGridStep }).boxLowPrice
           : null,
+        activeBoxLeverage: (activeBox?.leverage as number | undefined) ?? null,
         stopStage: r.status === 'STOPPING' ? (r.stopStage ?? null) : null,
         stopWarning: r.status === 'STOPPED' ? (r.stopWarning ?? null) : null,
         lastPositionQty: r.lastPositionQty ?? null,
@@ -331,9 +344,11 @@ export class BotManagerService implements OnApplicationBootstrap {
     }
     // 合约可交易性校验：symbol 不存在于交易所时提前拒绝，避免运行期才发现。
     await this.launcher.assertSymbolTradable(input.credentialId, input.symbol);
-    // 唯一性不变量：同一 (exchangeUid, symbol) 至多一个未结束机器人。
+    // 唯一性不变量：同一 (exchangeUid, environment, symbol) 至多一个未结束机器人。
+    // environment 参与判重是因为部分交易所（如 OKX）demo/live 可能共用同一账户 UID，
+    // 但两者在交易所侧是完全独立的资金池/持仓/订单簿，不应互相阻塞。
     const dup = await this.prisma.robot.findFirst({
-      where: { exchangeUid: input.exchangeAccountId, symbol: input.symbol, endedAt: null },
+      where: { exchangeUid: input.exchangeAccountId, environment: input.environment, symbol: input.symbol, endedAt: null },
     });
     if (dup) {
       throw new ConflictException({ code: 'ROBOT_DUPLICATE', message: `A robot for ${input.symbol} already exists on this account` });
@@ -345,6 +360,7 @@ export class BotManagerService implements OnApplicationBootstrap {
           symbol: input.symbol,
           direction: input.direction,
           exchangeUid: input.exchangeAccountId,
+          environment: input.environment,
           status: 'PAUSED',
         } as unknown as Parameters<typeof this.prisma.robot.create>[0]['data'],
       });
@@ -362,10 +378,10 @@ export class BotManagerService implements OnApplicationBootstrap {
   async getRobotDetail(robotId: string): Promise<RobotDetail | null> {
     const r = await this.prisma.robot.findUnique({
       where: { id: robotId },
-      include: { account: { select: { id: true, exchangeId: true, label: true } } },
+      include: { account: { select: { id: true, exchangeId: true, environment: true, label: true } } },
     });
     if (!r) return null;
-    const account = (r as { account: { id: string; exchangeId: string; label: string } }).account;
+    const account = (r as { account: { id: string; exchangeId: string; environment: string; label: string } }).account;
     const boxes = await this.prisma.box.findMany({ where: { robotId, deletedAt: null } });
     const boxIds = boxes.map((b: { id: string }) => b.id);
     const ledgerByBox = await this.pnlLedger.getBoxesLedger(boxIds);
@@ -419,6 +435,7 @@ export class BotManagerService implements OnApplicationBootstrap {
       managed: this.schedulers.has(robotId),
       latestPrice: this.latestPrice.get(robotId),
       exchangeId: account.exchangeId,
+      environment: account.environment,
       accountLabel: account.label,
       credentialId: account.id,
       boxCount: boxes.length,
@@ -429,6 +446,7 @@ export class BotManagerService implements OnApplicationBootstrap {
       totalPnl,
       activeBoxHighPrice,
       activeBoxLowPrice,
+      activeBoxLeverage: (activeBoxRow?.leverage as number | undefined) ?? null,
       stopStage: r.status === 'STOPPING' ? (r.stopStage ?? null) : null,
       stopWarning: r.status === 'STOPPED' ? (r.stopWarning ?? null) : null,
       lastPositionQty: r.lastPositionQty ?? null,
@@ -476,6 +494,20 @@ export class BotManagerService implements OnApplicationBootstrap {
     }
   }
 
+  /** addBox/editBox 用：超时降级为 null（跳过最小下单量预校验），不让弹窗内的保存操作
+   * 卡在交易所 API 上——与 getMarketConstraints 拉取失败时的降级路径同一哲学。 */
+  private async getMarketConstraintsWithTimeout(
+    credentialId: string,
+    symbol: string,
+  ): Promise<{ minQty: number; minNotional: number; stepSize: number } | null> {
+    return Promise.race([
+      this.launcher.getMarketConstraints(credentialId, symbol),
+      new Promise<null>((resolve) =>
+        setTimeout(() => resolve(null), BotManagerService.MARKET_CONSTRAINTS_TIMEOUT_MS),
+      ),
+    ]);
+  }
+
   async addBox(robotId: string, input: AddBoxInput): Promise<{ id: string }> {
     const robot = await this.prisma.robot.findUnique({ where: { id: robotId } });
     if (!robot) {
@@ -487,7 +519,7 @@ export class BotManagerService implements OnApplicationBootstrap {
       stopLossGridCount: number; stopLossGridStep: number; activationPrice?: number;
     }>;
 
-    const toSpec = (b: { direction: string; takeProfitPrice: number; mainGridCount: number; mainGridStep: number; stopLossGridCount: number; stopLossGridStep: number; isolationStep?: number; activationPrice?: number }): BoxSpec => ({
+    const toSpec = (b: { direction: string; takeProfitPrice: number; mainGridCount: number; mainGridStep: number; stopLossGridCount: number; stopLossGridStep: number; isolationStep?: number; activationPrice?: number; mainGridPortionSize?: number }): BoxSpec => ({
       direction: b.direction,
       takeProfitPrice: b.takeProfitPrice,
       mainGridCount: b.mainGridCount,
@@ -496,10 +528,12 @@ export class BotManagerService implements OnApplicationBootstrap {
       stopLossGridStep: b.stopLossGridStep,
       isolationStep: b.isolationStep ?? b.stopLossGridStep,
       activationPrice: b.activationPrice,
+      mainGridPortionSize: b.mainGridPortionSize,
     });
 
     const newSpec: BoxSpec = toSpec(input);
-    const result = validateBoxAddition(newSpec, existing.map(toSpec), robot.direction);
+    const marketConstraints = await this.getMarketConstraintsWithTimeout(robot.accountId, robot.symbol);
+    const result = validateBoxAddition(newSpec, existing.map(toSpec), robot.direction, marketConstraints);
     if (!result.valid) {
       throwBoxValidationError(result.errors);
     }
@@ -541,7 +575,7 @@ export class BotManagerService implements OnApplicationBootstrap {
       direction: string; takeProfitPrice: number; mainGridCount: number; mainGridStep: number;
       stopLossGridCount: number; stopLossGridStep: number; activationPrice?: number;
     }>;
-    const toSpec = (b: { direction: string; takeProfitPrice: number; mainGridCount: number; mainGridStep: number; stopLossGridCount: number; stopLossGridStep: number; isolationStep?: number; activationPrice?: number }): BoxSpec => ({
+    const toSpec = (b: { direction: string; takeProfitPrice: number; mainGridCount: number; mainGridStep: number; stopLossGridCount: number; stopLossGridStep: number; isolationStep?: number; activationPrice?: number; mainGridPortionSize?: number }): BoxSpec => ({
       direction: b.direction,
       takeProfitPrice: b.takeProfitPrice,
       mainGridCount: b.mainGridCount,
@@ -550,9 +584,11 @@ export class BotManagerService implements OnApplicationBootstrap {
       stopLossGridStep: b.stopLossGridStep,
       isolationStep: b.isolationStep ?? b.stopLossGridStep,
       activationPrice: b.activationPrice,
+      mainGridPortionSize: b.mainGridPortionSize,
     });
     const newSpec: BoxSpec = toSpec({ direction: (robot as unknown as { direction: string }).direction, ...input });
-    const result = validateBoxAddition(newSpec, others.map(toSpec), (robot as unknown as { direction: string }).direction);
+    const marketConstraints = await this.getMarketConstraintsWithTimeout(robot.accountId, robot.symbol);
+    const result = validateBoxAddition(newSpec, others.map(toSpec), (robot as unknown as { direction: string }).direction, marketConstraints);
     if (!result.valid) {
       throwBoxValidationError(result.errors);
     }

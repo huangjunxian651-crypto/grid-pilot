@@ -6,6 +6,7 @@ import type { BoxDirection } from "./box-geometry";
 // Used by both apps/api (NestJS) and apps/web (Next.js)
 
 export type ExchangeId = "binance" | "gateio" | "okx";
+export type ExchangeEnvironment = "demo" | "live";
 export type FsmState =
   | "TRAILING_ENTRY"
   | "RUNNING"
@@ -108,6 +109,7 @@ export interface CreateBotDto {
 
 export interface ExchangeCredentialDto {
   exchangeId: ExchangeId;
+  environment: ExchangeEnvironment;
   accountId: string;
   label: string;
   apiKey: string;
@@ -152,6 +154,7 @@ export type WsEvent = TickerEvent | FillEvent | FsmEvent;
 export interface Credential {
   id: string;
   exchangeId: ExchangeId;
+  environment: ExchangeEnvironment;
   accountId: string;
   label: string;
   passphrase?: string;
@@ -163,6 +166,7 @@ export interface Credential {
 
 export interface CreateCredentialInput {
   exchangeId: ExchangeId;
+  environment: ExchangeEnvironment;
   accountId: string;
   label: string;
   apiKey: string;

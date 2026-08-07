@@ -16,6 +16,8 @@ import { toast } from "sonner";
 import { useCredentials } from "@/lib/hooks/useCredentials";
 import { getAccounts } from "@/lib/api";
 import { estimateRebate, isReferralMuted } from "@/lib/referral";
+import { robotUnrealizedRoiText } from "@/lib/margin-roi";
+import { TableScroll } from "@/components/ui/table-scroll";
 
 // ── 小节标签（uppercase mono 风格，照搬设计稿 10.5px / letter-spacing 0.9） ──
 function SectionLabel({ children, color = "var(--fg-2)" }: { children: React.ReactNode; color?: string }) {
@@ -480,7 +482,7 @@ export default function DashboardPage() {
                 {t("common.view_all")}
               </Link>
             </div>
-            <div className="gp-table-scroll" style={{ margin: "0 -16px", padding: "0 16px" }}>
+            <TableScroll style={{ margin: "0 -16px", padding: "0 16px" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                 <thead>
                   <tr style={{ color: "var(--fg-3)", fontSize: 10, textTransform: "uppercase", letterSpacing: 0.6 }}>
@@ -514,6 +516,7 @@ export default function DashboardPage() {
                     const inBox = hasBox && price != null ? price >= boxLowPrice && price <= boxHighPrice : false;
                     const boxPct = hasBox && boxHighPrice > boxLowPrice && price != null ? (price - boxLowPrice) / (boxHighPrice - boxLowPrice) : 0;
                     const upnl = robot.lastUnrealizedPnl;
+                    const upnlRoi = robotUnrealizedRoiText(robot);
                     return (
                       <tr key={robot.id} style={{ borderTop: "1px solid var(--border-subtle)", cursor: "pointer" }} onClick={() => { window.location.href = `/robots/${robot.id}`; }} data-testid="dash-robot-row">
                         <td style={{ padding: "12px 17px" }}>
@@ -541,6 +544,7 @@ export default function DashboardPage() {
                         <td style={{ padding: "12px 8px", textAlign: "right" }}>{price != null ? <PriceTicker price={price} prev={price} size={12} /> : <span style={{ color: "var(--fg-3)" }}>—</span>}</td>
                         <td className="num" style={{ padding: "12px 8px", textAlign: "right", fontWeight: 500, color: upnl == null ? "var(--fg-3)" : upnl >= 0 ? "var(--up)" : "var(--down)" }}>
                           {upnl == null ? "—" : `${upnl >= 0 ? "+" : "−"}$${Math.abs(upnl).toFixed(2)}`}
+                          {upnlRoi != null && <span data-testid="dash-upnl-roi" style={{ marginLeft: 6, fontSize: 11 }}>{upnlRoi}</span>}
                         </td>
                         <td className="gp-hide-mobile" style={{ padding: "12px 17px", textAlign: "right" }}>
                           <span className="num" style={{ color: "var(--fg-3)", fontSize: 11 }}>—</span>
@@ -551,13 +555,17 @@ export default function DashboardPage() {
                   })}
                 </tbody>
               </table>
-            </div>
+            </TableScroll>
           </Card>
         </div>
 
         {/* RIGHT rail */}
         <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
-          <AlphaEngineCard cumAlpha={cumAlpha} hasData={hasAlpha} rangeLabel={timeRange} />
+          {/* dashboard-main-grid 折叠成单栏时（≤1023px）这张卡会紧跟在顶部"累计 Alpha" KPI
+              卡片之后，展示同一个数值——两栏并排时不重复，单栏堆叠时纯属冗余，故窄屏隐藏 */}
+          <div className="gp-hide-tablet">
+            <AlphaEngineCard cumAlpha={cumAlpha} hasData={hasAlpha} rangeLabel={timeRange} />
+          </div>
           <FundDistributionCard />
           <LiveFillsCard />
         </div>

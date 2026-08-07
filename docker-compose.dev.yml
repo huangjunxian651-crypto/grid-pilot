@@ -1,0 +1,37 @@
+# 本地开发用基础设施（仅 postgres + redis），给 pnpm dev / dev:api / dev:web 配套。
+# 面向修改代码的开发者，不含 api/web 容器——那两个服务本地用 pnpm 跑，带热更新。
+# 自部署产品请用根目录的 docker-compose.yml（或 ./install.sh）。
+#   docker compose -f docker-compose.dev.yml up -d
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: gridpilot
+      POSTGRES_PASSWORD: gridpilot
+      POSTGRES_DB: gridpilot
+    ports:
+      - "${DB_PORT:-25432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gridpilot"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    ports:
+      - "${REDIS_PORT:-26379}:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:
+  redisdata:

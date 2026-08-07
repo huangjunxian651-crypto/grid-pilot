@@ -10,6 +10,7 @@ import { SUPPORTED_LANGS, type Lang } from "@/lib/i18n";
 import { useCredentials, useDeleteCredential } from "@/lib/hooks/useCredentials";
 import { useRobots, useStopRobot } from "@/lib/hooks/useBots";
 import { useProfile, useUpdateProfile, useDeleteAccount } from "@/lib/hooks/useProfile";
+import { useConfirm } from "@/lib/hooks/useConfirm";
 import { useChangePassword } from "@/lib/hooks/useAuth";
 import { useNotifications } from "@/lib/hooks/useNotifications";
 import { ReferralRegisterCards } from "@/components/referral/referral-register-cards";
@@ -95,11 +96,8 @@ export default function SettingsPage() {
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmNewPassword, setConfirmNewPassword] = useState("");
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [deleteConfirmText, setDeleteConfirmText] = useState("");
-  const [showStopAllConfirm, setShowStopAllConfirm] = useState(false);
-  const [stopAllClosePosition, setStopAllClosePosition] = useState(true);
   const changePassword = useChangePassword();
+  const confirm = useConfirm();
   const profileInitialized = useRef(false);
 
   useEffect(() => {
@@ -162,18 +160,46 @@ export default function SettingsPage() {
     }
   };
 
-  const handleStopAllBots = () => {
+  const handleStopAllBots = async () => {
+    const closePosRef = { current: true };
+    const ok = await confirm({
+      tier: "simple",
+      title: t("settings.stop_all_confirm_title"),
+      body: (
+        <>
+          {t("settings.stop_all_confirm_body")}
+          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer", marginTop: 12 }}>
+            <input
+              type="checkbox"
+              defaultChecked
+              data-testid="stop-all-close-pos-checkbox"
+              onChange={(e) => { closePosRef.current = e.target.checked; }}
+            />
+            {t("bot.stop_close_position")}
+          </label>
+        </>
+      ),
+      confirmLabel: t("common.confirm_stop"),
+    });
+    if (!ok) return;
     (robots ?? []).forEach((robot) => {
       if (robot.status === "RUNNING") {
-        stopRobot.mutate({ id: robot.id, closePosition: stopAllClosePosition });
+        stopRobot.mutate({ id: robot.id, closePosition: closePosRef.current });
       }
     });
     toast.success(t("common.synced"));
-    setShowStopAllConfirm(false);
-    setStopAllClosePosition(true);
   };
 
-  const handleClearAllCredentials = () => {
+  const handleClearAllCredentials = async () => {
+    const ok = await confirm({
+      tier: "destructive",
+      title: t("settings.clear_creds_confirm_title"),
+      body: t("settings.clear_creds_confirm_body"),
+      confirmWord: "CLEAR",
+      confirmHint: t("settings.clear_creds_confirm_input"),
+      confirmLabel: t("settings.clear_creds_btn"),
+    });
+    if (!ok) return;
     if (credentials) {
       credentials.forEach((cred) => {
         deleteCredential.mutate(cred.id);
@@ -182,11 +208,16 @@ export default function SettingsPage() {
     toast.success(t("common.synced"));
   };
 
-  const handleDeleteAccount = () => {
-    if (deleteConfirmText !== "DELETE") {
-      toast.error(t("settings.delete_wrong_confirm"));
-      return;
-    }
+  const handleDeleteAccount = async () => {
+    const ok = await confirm({
+      tier: "destructive",
+      title: t("settings.delete_confirm_title"),
+      body: t("settings.delete_confirm_desc"),
+      confirmWord: "DELETE",
+      confirmHint: t("settings.delete_confirm_input"),
+      confirmLabel: t("common.delete"),
+    });
+    if (!ok) return;
     deleteAccount.mutate(undefined, {
       onSuccess: () => {
         toast.success(t("common.synced"));
@@ -369,7 +400,7 @@ export default function SettingsPage() {
                     <div style={{ fontWeight: 500, fontSize: 13 }}>{t("settings.stop_all_bots")}</div>
                     <div style={{ fontSize: 12, color: "var(--fg-2)", marginTop: 2 }}>{t("settings.stop_all_bots_desc")}</div>
                   </div>
-                  <Button danger size="md" icon={<Icons.Stop size={13} />} onClick={() => setShowStopAllConfirm(true)}>{t("settings.stop_all_btn")}</Button>
+                  <Button danger size="md" icon={<Icons.Stop size={13} />} onClick={handleStopAllBots}>{t("settings.stop_all_btn")}</Button>
                 </div>
                 <div style={{ padding: 16, background: "var(--bg-2)", borderRadius: 10, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
                   <div>
@@ -383,45 +414,10 @@ export default function SettingsPage() {
                     <div style={{ fontWeight: 500, fontSize: 13 }}>{t("settings.delete_account")}</div>
                     <div style={{ fontSize: 12, color: "var(--fg-2)", marginTop: 2 }}>{t("settings.delete_account_desc")}</div>
                   </div>
-                  <Button danger size="md" icon={<Icons.Trash size={13} />} onClick={() => setShowDeleteConfirm(true)}>{t("settings.delete_account_btn")}</Button>
+                  <Button danger size="md" icon={<Icons.Trash size={13} />} onClick={handleDeleteAccount}>{t("settings.delete_account_btn")}</Button>
                 </div>
               </div>
             </Card>
-          )}
-
-          {showStopAllConfirm && (
-            <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }} onClick={() => { setShowStopAllConfirm(false); setStopAllClosePosition(true); }}>
-              <div style={{ background: "var(--bg-1)", borderRadius: 14, padding: 24, maxWidth: 440, width: "90%", border: "1px solid var(--border-subtle)" }} onClick={(e) => e.stopPropagation()}>
-                <h3 style={{ fontSize: 16, fontWeight: 600, fontFamily: "var(--font-display)", marginBottom: 8, color: "var(--down)" }}>{t("settings.stop_all_confirm_title")}</h3>
-                <div style={{ fontSize: 13, color: "var(--fg-2)", marginBottom: 16, lineHeight: 1.6 }}>{t("settings.stop_all_confirm_body")}</div>
-                <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 20, fontSize: 13, cursor: "pointer" }}>
-                  <input type="checkbox" checked={stopAllClosePosition} onChange={(e) => setStopAllClosePosition(e.target.checked)} />
-                  {t("bot.stop_close_position")}
-                </label>
-                <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-                  <Button variant="ghost" size="md" onClick={() => { setShowStopAllConfirm(false); setStopAllClosePosition(true); }}>{t("common.cancel")}</Button>
-                  <Button danger size="md" onClick={handleStopAllBots} disabled={stopRobot.isPending}>{t("common.confirm_stop")}</Button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {showDeleteConfirm && (
-            <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }} onClick={() => setShowDeleteConfirm(false)}>
-              <div style={{ background: "var(--bg-1)", borderRadius: 14, padding: 24, maxWidth: 420, width: "90%", border: "1px solid var(--border-subtle)" }} onClick={(e) => e.stopPropagation()}>
-                <h3 style={{ fontSize: 16, fontWeight: 600, fontFamily: "var(--font-display)", marginBottom: 8, color: "var(--down)" }}>{t("settings.delete_confirm_title")}</h3>
-                <div style={{ fontSize: 13, color: "var(--fg-2)", marginBottom: 20 }}>{t("settings.delete_confirm_desc")}</div>
-                <div style={{ marginBottom: 20 }}>
-                  <Field label={t("settings.delete_confirm_input")} value={deleteConfirmText} onChange={setDeleteConfirmText} />
-                </div>
-                <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-                  <Button variant="ghost" size="md" onClick={() => setShowDeleteConfirm(false)}>{t("common.cancel")}</Button>
-                  <Button danger size="md" onClick={handleDeleteAccount} disabled={deleteAccount.isPending}>
-                    {deleteAccount.isPending ? t("common.submitting") : t("common.delete")}
-                  </Button>
-                </div>
-              </div>
-            </div>
           )}
 
           {activeTab === "notifications" && (

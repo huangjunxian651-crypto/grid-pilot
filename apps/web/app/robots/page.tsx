@@ -4,6 +4,7 @@ import React from "react";
 import Link from "next/link";
 import { Shell } from "@/components/shell/shell";
 import { useRobots, usePauseRobot, useStartRobot, useStopRobot, useArchivedRobots } from "@/lib/hooks/useBots";
+import { useConfirm } from "@/lib/hooks/useConfirm";
 import { CopyRobotButton } from "@/components/robots/copy-robot-button";
 import { PnlCell } from "@/components/robots/pnl-cell";
 import { Button, FsmPill, Pulse, ExchangeMark } from "@/components/ui/primitives";
@@ -57,6 +58,7 @@ export default function RobotsPage() {
   const startRobot = useStartRobot();
   const pauseRobot = usePauseRobot();
   const stopRobot = useStopRobot();
+  const confirm = useConfirm();
   const list = robots ?? [];
   const { data: archived } = useArchivedRobots();
   const recentArchived = (archived ?? []).slice(0, 3);
@@ -116,6 +118,17 @@ export default function RobotsPage() {
                       · {fmt.exchangeName(r.exchangeId)} · {r.accountLabel}
                       {r.activeSessionCode ? ` · ${r.activeSessionCode}` : ""}
                     </span>
+                    {r.environment === "live" && (
+                      <span
+                        data-testid="robot-live-badge"
+                        style={{
+                          marginLeft: 8, fontSize: 10, fontWeight: 600, padding: "1px 6px",
+                          borderRadius: 4, background: "var(--alpha-tint)", color: "var(--warn)",
+                        }}
+                      >
+                        {t("keys.environment_live")}
+                      </span>
+                    )}
                   </div>
                   <div style={{ fontSize: 12, color: "var(--fg-2)", marginTop: 3, display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
                     <span style={{ color: DIR_TONE[r.direction] ?? "var(--fg-1)" }}>{t(`dir.${r.direction}`)}</span>
@@ -131,7 +144,7 @@ export default function RobotsPage() {
                 <div className="robot-card-aside">
                 {/* 总盈亏 / 已实现 / 手续费 / 未实现 */}
                 <div data-testid="robot-pnl">
-                  <PnlCell realizedPnl={r.realizedPnl} totalFees={r.totalFees} netPnl={r.netPnl} totalPnl={r.totalPnl} lastUnrealizedPnl={r.lastUnrealizedPnl} />
+                  <PnlCell realizedPnl={r.realizedPnl} totalFees={r.totalFees} netPnl={r.netPnl} totalPnl={r.totalPnl} lastUnrealizedPnl={r.lastUnrealizedPnl} marginBasis={{ positionQty: r.lastPositionQty, price: r.latestPrice, leverage: r.activeBoxLeverage }} />
                 </div>
 
                 {/* 标记价 */}
@@ -149,7 +162,15 @@ export default function RobotsPage() {
                       <IconButton
                         ariaLabel={t("robot.action_pause")}
                         title={t("robot.action_pause")}
-                        onClick={() => pauseRobot.mutate(r.id, { onSuccess: () => toast.success(t("robot.toast_paused")) })}
+                        onClick={async () => {
+                          const ok = await confirm({
+                            tier: "simple",
+                            title: t("robot.pause_confirm_title"),
+                            body: t("robot.pause_confirm_body"),
+                          });
+                          if (!ok) return;
+                          pauseRobot.mutate(r.id, { onSuccess: () => toast.success(t("robot.toast_paused")) });
+                        }}
                       >
                         <Icons.Pause size={14} />
                       </IconButton>
@@ -157,7 +178,16 @@ export default function RobotsPage() {
                         ariaLabel={t("robot.action_stop")}
                         title={t("robot.action_stop")}
                         danger
-                        onClick={() => stopRobot.mutate({ id: r.id, closePosition: true }, { onSuccess: () => toast.success(t("robot.toast_stop_submitted")) })}
+                        onClick={async () => {
+                          const ok = await confirm({
+                            tier: "simple",
+                            title: t("bot.stop_modal_title"),
+                            body: t("robot.stop_list_confirm_body"),
+                            confirmLabel: t("common.confirm_stop"),
+                          });
+                          if (!ok) return;
+                          stopRobot.mutate({ id: r.id, closePosition: true }, { onSuccess: () => toast.success(t("robot.toast_stop_submitted")) });
+                        }}
                       >
                         <Icons.Stop size={13} />
                       </IconButton>

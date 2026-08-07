@@ -2,6 +2,7 @@
 // 支持 Binance / Gate.io / OKX，对接测试开发网
 
 import { Injectable } from "@nestjs/common";
+import { ExchangeEnvironment } from "@gridpilot/shared-types";
 import { IExchangeAdapter } from "./interfaces/exchange-adapter.interface";
 import { ExchangeRegistryService } from "./exchange-registry.service";
 import { BinanceAdapter } from "./adapters/binance/binance.adapter";
@@ -14,6 +15,7 @@ export interface CredentialInput {
   apiKey: string;
   apiSecret: string;
   passphrase?: string;
+  environment: ExchangeEnvironment;
 }
 
 @Injectable()
@@ -27,6 +29,7 @@ export class ExchangeAdapterFactory {
           apiKey: credential.apiKey,
           apiSecret: credential.apiSecret,
           accountId: credential.accountId,
+          environment: credential.environment,
         });
 
       case "gateio":
@@ -34,6 +37,7 @@ export class ExchangeAdapterFactory {
           apiKey: credential.apiKey,
           apiSecret: credential.apiSecret,
           accountId: credential.accountId,
+          environment: credential.environment,
         });
 
       case "okx":
@@ -42,6 +46,7 @@ export class ExchangeAdapterFactory {
           apiSecret: credential.apiSecret,
           passphrase: credential.passphrase ?? "",
           accountId: credential.accountId,
+          environment: credential.environment,
         });
 
       default:

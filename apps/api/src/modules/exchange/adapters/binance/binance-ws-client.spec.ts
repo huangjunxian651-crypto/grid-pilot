@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('axios', () => ({ default: { put: vi.fn(), post: vi.fn() } }));
 import axios from 'axios';
 import { BinanceWsClient } from './binance-ws-client';
+import { BINANCE_REST_DEMO, BINANCE_WS_DEMO, BINANCE_REST_LIVE, BINANCE_WS_LIVE } from './binance.types';
 
 function makeUserDataClient(): any {
   const client = new BinanceWsClient({ apiKey: 'k', apiSecret: 's' }, true);
@@ -34,5 +35,28 @@ describe('BinanceWsClient listenKey 续期恢复（方案A）', () => {
     await client.refreshListenKey();
     expect(forceSpy).not.toHaveBeenCalled();
     expect((client as any).listenKey).toBe('new-key');
+  });
+});
+
+// 直接读取构造函数解析出的 baseUrl/wsUrl（私有字段，与仓库内其余用例访问受保护/私有
+// 成员的方式一致，见上方对 listenKey 的直接读写）——覆盖此前 review 指出的缺口：
+// REST 侧（BinanceAdapter）已有环境路由测试，但 WS 侧三元表达式方向此前无测试兜底。
+describe('BinanceWsClient environment routing', () => {
+  it('environment 缺省 → baseUrl/wsUrl 解析为 DEMO', () => {
+    const client = new BinanceWsClient({ apiKey: 'k', apiSecret: 's' });
+    expect((client as any).baseUrl).toBe(BINANCE_REST_DEMO);
+    expect((client as any).wsUrl).toBe(BINANCE_WS_DEMO);
+  });
+
+  it('environment: "demo" → baseUrl/wsUrl 解析为 DEMO', () => {
+    const client = new BinanceWsClient({ apiKey: 'k', apiSecret: 's' }, false, 'demo');
+    expect((client as any).baseUrl).toBe(BINANCE_REST_DEMO);
+    expect((client as any).wsUrl).toBe(BINANCE_WS_DEMO);
+  });
+
+  it('environment: "live" → baseUrl/wsUrl 解析为 LIVE', () => {
+    const client = new BinanceWsClient({ apiKey: 'k', apiSecret: 's' }, false, 'live');
+    expect((client as any).baseUrl).toBe(BINANCE_REST_LIVE);
+    expect((client as any).wsUrl).toBe(BINANCE_WS_LIVE);
   });
 });

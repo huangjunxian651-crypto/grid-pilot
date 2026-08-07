@@ -7,10 +7,12 @@ import { Card, Button, SectionHeader, Badge, ExchangeMark, Pulse, Field } from "
 import { Icons } from "@/components/ui/icons";
 import { fmt } from "@/lib/store";
 import { useCredentials, useCreateCredential, useUpdateCredential, useDeleteCredential } from "@/lib/hooks/useCredentials";
+import { useConfirm } from "@/lib/hooks/useConfirm";
 import { type ExchangeId } from "@gridpilot/shared-types";
 import { credentialApi } from "@/lib/api";
 import { ReferralCta } from "@/components/referral/referral-cta";
 import { ReferralRegisterPrompt } from "@/components/referral/referral-register-prompt";
+import { TableScroll } from "@/components/ui/table-scroll";
 
 const EXCHANGES = [
   { ex: "binance", name: "Binance USD-M", sdk: "derivatives-trading · v1", latency: "38ms", iconBg: "#f0b90b1a" },
@@ -45,6 +47,7 @@ export default function ExchangeKeysPage() {
   const createMutation = useCreateCredential();
   const updateMutation = useUpdateCredential();
   const deleteMutation = useDeleteCredential();
+  const confirm = useConfirm();
 
   const [showForm, setShowForm] = React.useState(false);
   const [editingId, setEditingId] = React.useState<string | null>(null);
@@ -52,6 +55,7 @@ export default function ExchangeKeysPage() {
   const [activeOnly, setActiveOnly] = React.useState(false);
   const [form, setForm] = React.useState<{
     exchangeId: ExchangeId;
+    environment: "demo" | "live";
     accountId: string;
     label: string;
     apiKey: string;
@@ -59,6 +63,7 @@ export default function ExchangeKeysPage() {
     passphrase: string;
   }>({
     exchangeId: "binance",
+    environment: "demo",
     accountId: "",
     label: "",
     apiKey: "",
@@ -91,7 +96,7 @@ export default function ExchangeKeysPage() {
           onSuccess: () => {
             setShowForm(false);
             setEditingId(null);
-            setForm({ exchangeId: "binance", accountId: "", label: "", apiKey: "", apiSecret: "", passphrase: "" });
+            setForm({ exchangeId: "binance", environment: "demo", accountId: "", label: "", apiKey: "", apiSecret: "", passphrase: "" });
             setMaskedValues({ apiKey: "", apiSecret: "" });
           },
         }
@@ -100,6 +105,7 @@ export default function ExchangeKeysPage() {
       createMutation.mutate(
         {
           exchangeId: form.exchangeId,
+          environment: form.environment,
           accountId: form.accountId,
           label: form.label,
           apiKey: form.apiKey,
@@ -109,7 +115,7 @@ export default function ExchangeKeysPage() {
         {
           onSuccess: () => {
             setShowForm(false);
-            setForm({ exchangeId: "binance", accountId: "", label: "", apiKey: "", apiSecret: "", passphrase: "" });
+            setForm({ exchangeId: "binance", environment: "demo", accountId: "", label: "", apiKey: "", apiSecret: "", passphrase: "" });
           },
         }
       );
@@ -142,7 +148,7 @@ export default function ExchangeKeysPage() {
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
             <div style={{ fontSize: 13, fontWeight: 500 }}>{editingId ? t("keys.edit_credential") : t("keys.add_credential")}</div>
             <button
-              onClick={() => { setShowForm(false); setEditingId(null); setForm({ exchangeId: "binance", accountId: "", label: "", apiKey: "", apiSecret: "", passphrase: "" }); setMaskedValues({ apiKey: "", apiSecret: "" }); }}
+              onClick={() => { setShowForm(false); setEditingId(null); setForm({ exchangeId: "binance", environment: "demo", accountId: "", label: "", apiKey: "", apiSecret: "", passphrase: "" }); setMaskedValues({ apiKey: "", apiSecret: "" }); }}
               style={{ width: 28, height: 28, borderRadius: 5, display: "inline-flex", alignItems: "center", justifyContent: "center", color: "var(--fg-2)", background: "transparent", border: "none", cursor: "pointer" }}
             >
               <Icons.X size={14} />
@@ -166,6 +172,38 @@ export default function ExchangeKeysPage() {
             <Field label={t("keys.account_id")} value={form.accountId} onChange={(v) => setForm((f) => ({ ...f, accountId: v }))} />
             <Field label={t("keys.label")} value={form.label} onChange={(v) => setForm((f) => ({ ...f, label: v }))} />
           </div>
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 12, color: "var(--fg-2)", marginBottom: 5, fontWeight: 500 }}>{t("keys.environment")}</div>
+            {editingId == null ? (
+              <div style={{ display: "flex", gap: 10 }}>
+                {(["demo", "live"] as const).map((env) => {
+                  const sel = form.environment === env;
+                  return (
+                    <button
+                      key={env}
+                      type="button"
+                      data-testid={`keys-env-${env}`}
+                      onClick={() => setForm((f) => ({ ...f, environment: env }))}
+                      style={{
+                        flex: 1, height: 34, borderRadius: 6, cursor: "pointer",
+                        fontSize: 12.5, fontWeight: sel ? 600 : 500,
+                        background: sel ? "var(--alpha-tint)" : "var(--bg-2)",
+                        border: `1px solid ${sel ? "var(--warn)" : "var(--border-default)"}`,
+                        color: sel ? "var(--warn)" : "var(--fg-2)",
+                      }}
+                    >
+                      {env === "live" ? t("keys.environment_live") : t("keys.environment_demo")}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <Badge tone={form.environment === "live" ? "warn" : "neutral"}>{form.environment === "live" ? t("keys.environment_live") : t("keys.environment_demo")}</Badge>
+            )}
+            {editingId == null && form.environment === "live" && (
+              <div style={{ marginTop: 6, fontSize: 11.5, color: "var(--warn)" }}>{t("keys.environment_live_warning")}</div>
+            )}
+          </div>
           <div className="gp-grid-2 gp-grid-1-sm" style={{ gap: 12, marginBottom: 12 }}>
             <Field label="API Key" value={form.apiKey} placeholder={editingId ? maskedValues.apiKey : undefined} onChange={(v) => setForm((f) => ({ ...f, apiKey: v }))} />
             <Field label="API Secret" type="password" value={form.apiSecret} placeholder={editingId ? maskedValues.apiSecret : undefined} onChange={(v) => setForm((f) => ({ ...f, apiSecret: v }))} />
@@ -175,7 +213,7 @@ export default function ExchangeKeysPage() {
           </div>
           {editingId == null && <ReferralAccountFork exchangeId={form.exchangeId} />}
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <Button variant="ghost" size="md" onClick={() => { setShowForm(false); setEditingId(null); setForm({ exchangeId: "binance", accountId: "", label: "", apiKey: "", apiSecret: "", passphrase: "" }); setMaskedValues({ apiKey: "", apiSecret: "" }); }}>{t("common.cancel")}</Button>
+            <Button variant="ghost" size="md" onClick={() => { setShowForm(false); setEditingId(null); setForm({ exchangeId: "binance", environment: "demo", accountId: "", label: "", apiKey: "", apiSecret: "", passphrase: "" }); setMaskedValues({ apiKey: "", apiSecret: "" }); }}>{t("common.cancel")}</Button>
             <Button
               variant="primary"
               size="md"
@@ -228,25 +266,25 @@ export default function ExchangeKeysPage() {
             {t("keys.active_only")}
           </Button>
         </div>
-        <div className="gp-table-scroll">
+        <TableScroll>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
           <thead>
             <tr style={{ color: "var(--fg-3)", fontSize: 10, textTransform: "uppercase", letterSpacing: 0.6 }}>
-              {[t("keys.label"), t("keys.exchange"), t("keys.account_id"), t("keys.added_at"), ""].map((h, i) => (
-                <th key={i} style={{ padding: i === 0 ? "10px 17px" : i === 4 ? "10px 17px" : "10px 8px", textAlign: i === 4 ? "right" : "left", fontWeight: 600 }}>{h}</th>
+              {[t("keys.label"), t("keys.exchange"), t("keys.environment"), t("keys.account_id"), t("keys.added_at"), ""].map((h, i) => (
+                <th key={i} style={{ padding: i === 0 ? "10px 17px" : i === 5 ? "10px 17px" : "10px 8px", textAlign: i === 5 ? "right" : "left", fontWeight: 600 }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {isLoading ? (
               <tr>
-                <td colSpan={5} style={{ padding: "24px 16px", textAlign: "center", color: "var(--fg-3)" }}>
+                <td colSpan={6} style={{ padding: "24px 16px", textAlign: "center", color: "var(--fg-3)" }}>
                   {t("common.loading")}
                 </td>
               </tr>
             ) : creds.length === 0 ? (
               <tr>
-                <td colSpan={5} style={{ padding: "24px 16px", textAlign: "center", color: "var(--fg-3)" }}>
+                <td colSpan={6} style={{ padding: "24px 16px", textAlign: "center", color: "var(--fg-3)" }}>
                   {t("keys.no_credentials")}
                   <div style={{ padding: "12px 16px" }}>
                     <ReferralRegisterPrompt />
@@ -270,6 +308,9 @@ export default function ExchangeKeysPage() {
                     </div>
                   </td>
                   <td style={{ padding: "12px 8px" }}>
+                    <Badge tone={c.environment === "live" ? "warn" : "neutral"}>{c.environment === "live" ? t("keys.environment_live") : t("keys.environment_demo")}</Badge>
+                  </td>
+                  <td style={{ padding: "12px 8px" }}>
                     <span className="num" style={{ color: "var(--fg-1)" }}>{c.accountId}</span>
                   </td>
                   <td style={{ padding: "12px 8px" }}>
@@ -284,6 +325,7 @@ export default function ExchangeKeysPage() {
                           setEditingId(c.id);
                           setForm({
                             exchangeId: c.exchangeId,
+                            environment: c.environment,
                             accountId: c.accountId,
                             label: c.label,
                             apiKey: "",
@@ -303,10 +345,14 @@ export default function ExchangeKeysPage() {
                         <Icons.Edit size={13} />
                       </button>
                       <button
-                        onClick={() => {
-                          if (confirm(t("keys.confirm_delete"))) {
-                            deleteMutation.mutate(c.id);
-                          }
+                        onClick={async () => {
+                          const ok = await confirm({
+                            tier: "simple",
+                            title: t("keys.confirm_delete_title"),
+                            body: t("keys.confirm_delete"),
+                          });
+                          if (!ok) return;
+                          deleteMutation.mutate(c.id);
                         }}
                         disabled={deleteMutation.isPending}
                         style={{ width: 28, height: 28, borderRadius: 5, display: "inline-flex", alignItems: "center", justifyContent: "center", color: "var(--fg-2)", background: "transparent", border: "none", cursor: "pointer", opacity: deleteMutation.isPending ? 0.4 : 1 }}
@@ -320,7 +366,7 @@ export default function ExchangeKeysPage() {
             )}
           </tbody>
         </table>
-        </div>
+        </TableScroll>
       </Card>
 
       <div style={{ padding: "15px 16px", background: "var(--bg-1)", border: "1px solid var(--border-subtle)", borderRadius: 12, fontSize: 12, color: "var(--fg-1)", lineHeight: 1.7 }}>

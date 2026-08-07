@@ -1,7 +1,7 @@
 // GateioAdapter — USDT 永续合约适配器
 // 使用 gate-api 官方 SDK (REST)
 // WebSocket 手动实现（无官方 Node.js WS SDK）
-// 对接 Gate.io 测试网
+// 按 environment 路由端点：demo(默认，测试网 GATEIO_REST_TESTNET) / live(实盘 GATEIO_REST_LIVE)
 
 import axios, { AxiosError } from "axios";
 import {
@@ -35,7 +35,8 @@ import {
   CreateOrderParams,
   CreateAlgoOrderParams,
 } from "../../interfaces/exchange-adapter.interface";
-import { GATEIO_REST_TESTNET, GATEIO_WS_TESTNET, GATEIO_SETTLE } from "./gateio.types";
+import { GATEIO_REST_TESTNET, GATEIO_WS_TESTNET, GATEIO_REST_LIVE, GATEIO_SETTLE } from "./gateio.types";
+import { ExchangeEnvironment } from "@gridpilot/shared-types";
 import { GateioWsClient } from "./gateio-ws-client";
 import {
   toGateioSymbol,
@@ -145,6 +146,7 @@ export class GateioAdapter implements IExchangeAdapter {
   private apiKey: string;
   private apiSecret: string;
   private baseUrl: string;
+  private environment: ExchangeEnvironment;
   // Unsigned HTTP client for public market endpoints (REST ticker fallback)
   private http = axios.create({ timeout: 30000 });
 
@@ -156,11 +158,12 @@ export class GateioAdapter implements IExchangeAdapter {
   // Track per-generator WS clients so destroy() can clean them up
   private activeWsClients = new Set<GateioWsClient>();
 
-  constructor(credentials: { apiKey: string; apiSecret: string; accountId?: string }) {
+  constructor(credentials: { apiKey: string; apiSecret: string; accountId?: string; environment?: ExchangeEnvironment }) {
     this.apiKey = credentials.apiKey;
     this.apiSecret = credentials.apiSecret;
     this.accountId = credentials.accountId ?? "gateio-account";
-    this.baseUrl = GATEIO_REST_TESTNET;
+    this.environment = credentials.environment ?? "demo";
+    this.baseUrl = this.environment === "live" ? GATEIO_REST_LIVE : GATEIO_REST_TESTNET;
 
     const apiClient = new ApiClient();
     apiClient.setApiKeySecret(this.apiKey, this.apiSecret);
@@ -233,7 +236,7 @@ export class GateioAdapter implements IExchangeAdapter {
   // ── WebSocket Streams ─────────────────────────────────────────
 
   async *watchTicker(symbol: string): AsyncIterableIterator<Ticker> {
-    const client = new GateioWsClient({ apiKey: this.apiKey, apiSecret: this.apiSecret });
+    const client = new GateioWsClient({ apiKey: this.apiKey, apiSecret: this.apiSecret }, this.environment);
     this.activeWsClients.add(client);
     const STREAM_TIMEOUT_MS = 30000;
     try {
@@ -295,7 +298,7 @@ export class GateioAdapter implements IExchangeAdapter {
   }
 
   async *watchOrderFills(_symbol: string): AsyncIterableIterator<OrderFill> {
-    const client = new GateioWsClient({ apiKey: this.apiKey, apiSecret: this.apiSecret });
+    const client = new GateioWsClient({ apiKey: this.apiKey, apiSecret: this.apiSecret }, this.environment);
     this.activeWsClients.add(client);
     try {
       await client.connect();
@@ -343,7 +346,7 @@ export class GateioAdapter implements IExchangeAdapter {
   }
 
   async *watchAlgoTriggers(_symbol: string): AsyncIterableIterator<AlgoTrigger> {
-    const client = new GateioWsClient({ apiKey: this.apiKey, apiSecret: this.apiSecret });
+    const client = new GateioWsClient({ apiKey: this.apiKey, apiSecret: this.apiSecret }, this.environment);
     this.activeWsClients.add(client);
     try {
       await client.connect();
@@ -395,7 +398,7 @@ export class GateioAdapter implements IExchangeAdapter {
   }
 
   async *watchPositions(symbol: string): AsyncIterableIterator<Position> {
-    const client = new GateioWsClient({ apiKey: this.apiKey, apiSecret: this.apiSecret });
+    const client = new GateioWsClient({ apiKey: this.apiKey, apiSecret: this.apiSecret }, this.environment);
     this.activeWsClients.add(client);
     try {
       await client.connect();
@@ -887,7 +890,7 @@ export class GateioAdapter implements IExchangeAdapter {
       symbol,
       rawSymbol,
       minQty: contractsToCoin(orderSizeMin, contractSize),
-      minNotional: 0, // Gate.io doesn't expose this directly; use price * minQty
+      minNotional: 0, // Gate.io 合约按张数计价，不单独暴露 USDT 名义价值门槛；真实下限由 minQty 承担
       stepSize: contractsToCoin(1, contractSize), // 1 contract step
       tickSize: orderPriceRound,
       contractSize,

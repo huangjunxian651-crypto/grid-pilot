@@ -12,6 +12,7 @@ function wrap(ui: React.ReactNode) {
 const mockLogout = vi.fn();
 let mockAuthUser: { id: string; email: string; displayName: string; language: string } | null = { id: "u1", email: "alice@example.com", displayName: "Alice Wang", language: "en" };
 let mockRunningBots: { sessionCode: string }[] = [];
+let mockRobots: { environment: string; endedAt: string | null }[] = [];
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/bots",
@@ -42,6 +43,7 @@ vi.mock("@/lib/hooks/useNotifications", () => ({
 
 vi.mock("@/lib/hooks/useBots", () => ({
   useRunningBots: () => ({ data: mockRunningBots }),
+  useRobots: () => ({ data: mockRobots }),
 }));
 
 vi.mock("@/lib/hooks/useProfile", () => ({
@@ -52,6 +54,7 @@ describe("Shell", () => {
   beforeEach(() => {
     mockAuthUser = { id: "u1", email: "alice@example.com", displayName: "Alice Wang", language: "en" };
     mockRunningBots = [];
+    mockRobots = [];
     mockLogout.mockClear();
   });
 
@@ -139,5 +142,18 @@ describe("Shell", () => {
     const indicator = dashLink?.querySelector("[data-testid='nav-active-indicator']");
     expect(indicator).toBeTruthy();
     expect(indicator?.getAttribute("style") ?? "").toContain("var(--accent)");
+  });
+
+  it("不显示正式环境横幅：无机器人或仅有 demo/已归档 live 机器人", () => {
+    mockRobots = [{ environment: "demo", endedAt: null }, { environment: "live", endedAt: "2026-08-01T00:00:00Z" }];
+    render(wrap(<Shell><div>Content</div></Shell>));
+    expect(screen.queryByTestId("shell-live-banner")).not.toBeInTheDocument();
+  });
+
+  it("显示正式环境横幅：存在未归档的 live 机器人", () => {
+    mockRobots = [{ environment: "live", endedAt: null }];
+    render(wrap(<Shell><div>Content</div></Shell>));
+    expect(screen.getByTestId("shell-live-banner")).toBeInTheDocument();
+    expect(screen.getByText("shell.live_banner")).toBeInTheDocument();
   });
 });

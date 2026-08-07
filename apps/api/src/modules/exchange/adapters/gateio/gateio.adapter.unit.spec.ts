@@ -5,7 +5,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import nock from "nock";
 import { GateioAdapter } from "./gateio.adapter";
 import { ExchangeError, ErrorCategory } from "../../interfaces/exchange-adapter.interface";
-import { GATEIO_REST_TESTNET } from "./gateio.types";
+import { GATEIO_REST_TESTNET, GATEIO_REST_LIVE } from "./gateio.types";
 
 const BASE_URL = GATEIO_REST_TESTNET;
 
@@ -758,5 +758,19 @@ describe('mapGateioBookTickerFrame — book_ticker 帧映射（0 价帧曾致 LO
   it('字段为 0 或非数字返回 null', () => {
     expect(mapGateioBookTickerFrame('ETH/USDT', { b: '0', a: '0' })).toBeNull();
     expect(mapGateioBookTickerFrame('ETH/USDT', { b: 'abc', a: 'def' })).toBeNull();
+  });
+});
+
+describe("GateioAdapter environment routing", () => {
+  afterEach(() => nock.cleanAll());
+
+  it("live targets GATEIO_REST_LIVE for the REST ticker fallback", async () => {
+    const adapter = new GateioAdapter({ apiKey: "k", apiSecret: "s", accountId: "a", environment: "live" });
+    const liveScope = nock(GATEIO_REST_LIVE)
+      .get("/futures/usdt/tickers")
+      .query({ contract: "ETH_USDT" })
+      .reply(200, [{ contract: "ETH_USDT", last: "2500", highest_bid: "2499", lowest_ask: "2501" }]);
+    await adapter.getTicker("ETH/USDT");
+    expect(liveScope.isDone()).toBe(true);
   });
 });

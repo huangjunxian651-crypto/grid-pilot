@@ -205,6 +205,30 @@ describe('TradingEngineService.handleAutoTermination', () => {
     }
   });
 
+  it('STOP 余额快照在立即对账完成后才抓取（快照 realizedPnl 必须含平仓成交，code-review I2）', async () => {
+    const order: string[] = [];
+    const svc = makeService();
+    prismaFindUnique.mockResolvedValue({
+      id: 'r1', boxId: 'b1', endedAt: null, exitReason: null,
+      realizedPnl: 0, totalFees: 0, totalSavings: 0,
+      box: { robotId: 'rb1', accountId: 'acct1' },
+    });
+    (svc as any).runners.set('session-test', { symbol: 'ETH/USDT' });
+    (svc as any).sessionAdapterMap.set('session-test', { id: 'a' });
+    reconcileRun.mockImplementation(async () => {
+      await new Promise((r) => setTimeout(r, 10));
+      order.push('reconcile');
+    });
+    captureSnapshot.mockImplementation(async () => {
+      order.push('snapshot');
+    });
+
+    await (svc as any).handleAutoTermination('session-test', 'LIQUIDATED');
+    await flush();
+
+    expect(order).toEqual(['reconcile', 'snapshot']);
+  });
+
   it('handleAutoTermination 走 reconcile：账户已无其他 runner → stopPolling 该账户', async () => {
     const svc = makeService();
     (svc as any).sessionCredentialMap.set('session-test', 'cred-1');
@@ -1029,67 +1053,79 @@ describe('TradingEngineService 触发式单单自愈（onOwnFillSettled）', () 
 describe('TradingEngineService 周期性持仓漂移检测（checkPositionDrift）', () => {
   function makeSvc() {
     const runFindUnique = vi.fn();
-    const mockPrisma = { run: { findUnique: runFindUnique } };
+    const runUpdate = vi.fn().mockResolvedValue({});
+    const mockPrisma = { run: { findUnique: runFindUnique, update: runUpdate } };
     const createAndBroadcast = vi.fn().mockResolvedValue({});
     const svc = new TradingEngineService(
       mockPrisma as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any,
       {} as any, {} as any,
       { createAndBroadcast } as any,
     );
-    return { svc, runFindUnique, createAndBroadcast };
+    return { svc, runFindUnique, runUpdate, createAndBroadcast };
   }
 
-  it('单次漂移观测（可能是过期快照）→ 不发送告警', async () => {
-    const { svc, runFindUnique, createAndBroadcast } = makeSvc();
+  it('单次漂移观测（可能是过期快照）→ 不重锚不通知', async () => {
+    const { svc, runFindUnique, runUpdate, createAndBroadcast } = makeSvc();
     runFindUnique.mockResolvedValue({ pnlSignedPosition: 0.475, configSnapshot: { mainGridPortionSize: 0.05 } });
-    const runner = { getState: () => ({ position: { baseAssetQty: 0.55 } }) } as any;
+    const runner = { getState: () => ({ position: { baseAssetQty: 0.55, entryPrice: 1900 } }) } as any;
 
     await (svc as any).checkPositionDrift('RC1', runner);
 
+    expect(runUpdate).not.toHaveBeenCalled();
     expect(createAndBroadcast).not.toHaveBeenCalled();
   });
 
-  it('连续两次 sweep 都观测到同一漂移 → 发送 POSITION_DRIFT_DETECTED 告警', async () => {
-    const { svc, runFindUnique, createAndBroadcast } = makeSvc();
-    runFindUnique.mockResolvedValue({ pnlSignedPosition: 0.475, configSnapshot: { mainGridPortionSize: 0.05 } });
-    const runner = { getState: () => ({ position: { baseAssetQty: 0.55 } }) } as any;
+  it('连续两次 sweep 都观测到同一漂移 → 自愈重锚台账并通知（POSITION_LEDGER_REANCHORED）', async () => {
+    const { svc, runFindUnique, runUpdate, createAndBroadcast } = makeSvc();
+    runFindUnique.mockResolvedValue({ id: 'run-1', pnlSignedPosition: 0.475, configSnapshot: { mainGridPortionSize: 0.05 } });
+    const runner = { getState: () => ({ position: { baseAssetQty: 0.55, entryPrice: 1900 } }) } as any;
 
     await (svc as any).checkPositionDrift('RC1', runner);
     await (svc as any).checkPositionDrift('RC1', runner);
 
+    expect(runUpdate).toHaveBeenCalledWith({
+      where: { id: 'run-1' },
+      data: { pnlSignedPosition: 0.55, pnlAvgCost: 1900 },
+    });
     expect(createAndBroadcast).toHaveBeenCalledTimes(1);
     expect(createAndBroadcast).toHaveBeenCalledWith(
-      expect.objectContaining({ code: 'POSITION_DRIFT_DETECTED', type: 'alert' }),
+      expect.objectContaining({ code: 'POSITION_LEDGER_REANCHORED', type: 'alert' }),
     );
   });
 
-  it('差值在阈值内 → 不发送告警', async () => {
-    const { svc, runFindUnique, createAndBroadcast } = makeSvc();
+  it('差值在阈值内 → 不重锚不通知', async () => {
+    const { svc, runFindUnique, runUpdate, createAndBroadcast } = makeSvc();
     runFindUnique.mockResolvedValue({ pnlSignedPosition: 0.52, configSnapshot: { mainGridPortionSize: 0.05 } });
-    const runner = { getState: () => ({ position: { baseAssetQty: 0.55 } }) } as any;
+    const runner = { getState: () => ({ position: { baseAssetQty: 0.55, entryPrice: 1900 } }) } as any;
 
     await (svc as any).checkPositionDrift('RC1', runner);
 
+    expect(runUpdate).not.toHaveBeenCalled();
     expect(createAndBroadcast).not.toHaveBeenCalled();
   });
 
-  it('同一漂移状态持续存在时不重复告警；差值恢复到阈值内后再次漂移（连续两次）会重新告警', async () => {
-    const { svc, runFindUnique, createAndBroadcast } = makeSvc();
-    const runner = { getState: () => ({ position: { baseAssetQty: 0.55 } }) } as any;
+  it('同一漂移持续存在时每次确认观测都重锚（防并发成交末写者覆盖），但通知每 episode 只发一次；差值恢复后再次漂移会重新自愈', async () => {
+    // code-review I1：重锚若与 ingestInner 的读-改-写竞争被覆盖，仅靠 notified 闩
+    // 跳过重锚会让漂移永久静默。重锚是幂等的（写交易所真值），故每次确认都重做；
+    // 幂等闩只作用于通知。
+    const { svc, runFindUnique, runUpdate, createAndBroadcast } = makeSvc();
+    const runner = { getState: () => ({ position: { baseAssetQty: 0.55, entryPrice: 1900 } }) } as any;
 
-    runFindUnique.mockResolvedValue({ pnlSignedPosition: 0.475, configSnapshot: { mainGridPortionSize: 0.05 } });
-    await (svc as any).checkPositionDrift('RC1', runner); // 第1次：仅计数，不告警
-    await (svc as any).checkPositionDrift('RC1', runner); // 第2次：达到连续阈值，告警
-    await (svc as any).checkPositionDrift('RC1', runner); // 第3次：同一episode内不重复告警
+    runFindUnique.mockResolvedValue({ id: 'run-1', pnlSignedPosition: 0.475, configSnapshot: { mainGridPortionSize: 0.05 } });
+    await (svc as any).checkPositionDrift('RC1', runner); // 第1次：仅计数
+    await (svc as any).checkPositionDrift('RC1', runner); // 第2次：确认漂移，重锚+通知
+    await (svc as any).checkPositionDrift('RC1', runner); // 第3次：仍漂移，再次重锚（防覆盖），不重复通知
+    expect(runUpdate).toHaveBeenCalledTimes(2);
     expect(createAndBroadcast).toHaveBeenCalledTimes(1);
 
-    runFindUnique.mockResolvedValue({ pnlSignedPosition: 0.55, configSnapshot: { mainGridPortionSize: 0.05 } });
+    runFindUnique.mockResolvedValue({ id: 'run-1', pnlSignedPosition: 0.55, configSnapshot: { mainGridPortionSize: 0.05 } });
     await (svc as any).checkPositionDrift('RC1', runner); // 恢复：重置计数与告警标记
 
-    runFindUnique.mockResolvedValue({ pnlSignedPosition: 0.475, configSnapshot: { mainGridPortionSize: 0.05 } });
-    await (svc as any).checkPositionDrift('RC1', runner); // 重新漂移第1次：不告警
+    runFindUnique.mockResolvedValue({ id: 'run-1', pnlSignedPosition: 0.475, configSnapshot: { mainGridPortionSize: 0.05 } });
+    await (svc as any).checkPositionDrift('RC1', runner); // 重新漂移第1次：仅计数
     expect(createAndBroadcast).toHaveBeenCalledTimes(1);
-    await (svc as any).checkPositionDrift('RC1', runner); // 重新漂移第2次：再次告警
+    await (svc as any).checkPositionDrift('RC1', runner); // 重新漂移第2次：再次自愈
+    expect(runUpdate).toHaveBeenCalledTimes(3);
     expect(createAndBroadcast).toHaveBeenCalledTimes(2);
   });
 });
@@ -1152,5 +1188,432 @@ describe('TradingEngineService.reconcileRobot', () => {
 
     expect(reconcileRun).toHaveBeenCalledWith('RC1', 'ETH/USDT', adapter);
     expect(result).toEqual({ newFillsCount: 1, dbPosition: 0.55, exchangePosition: 0.55, positionMatches: true });
+  });
+});
+
+describe('TradingEngineService.stopBot — 平仓成交最终对账（P0: 用户停止后平仓成交不得丢失）', () => {
+  function makeSvc() {
+    const reconcileRun = vi.fn().mockResolvedValue({ newFillsCount: 0 });
+    const orderCreate = vi.fn().mockResolvedValue({});
+    const prisma = {
+      run: {
+        findUnique: vi.fn().mockResolvedValue({ id: 'run-id-1', runCode: 'RC1', endedAt: null }),
+        update: vi.fn().mockResolvedValue({}),
+      },
+      order: { create: orderCreate },
+    };
+    const svc = new TradingEngineService(
+      prisma as any, {} as any, {} as any, {} as any, {} as any,
+      { stopPolling: vi.fn(), ensurePolling: vi.fn() } as any, {} as any,
+      { clearRealizedPnl: vi.fn() } as any,
+      { reconcileRun } as any,
+      { createAndBroadcast: vi.fn().mockResolvedValue({}) } as any,
+    );
+    (svc as any).runners.set('RC1', {
+      requestLiquidation: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue({ cancelFailed: [] }),
+      submitUserAction: vi.fn(),
+      symbol: 'ETH/USDT',
+    });
+    return { svc, reconcileRun, orderCreate };
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('stopBot 在 run 终态后用退出前的 adapter 做最终成交对账（平仓成交不因 sweep 停止而丢失）', async () => {
+    // 用户停止路径与自动终态同责：run 终态后退出周期 sweep，closePosition 的成交
+    // 若 WS 没收到就再无机会入库（2026-07-27 OKX 实测：用户关停 2.316 ETH 平仓成交
+    // 丢失 → 台账持仓虚高 2.32、成本池未重置、后续 realizedPnl 失真约 -57u）。
+    const { svc, reconcileRun } = makeSvc();
+    const adapter = { getPosition: vi.fn().mockResolvedValue({ baseAssetQty: 0 }) };
+    (svc as any).sessionAdapterMap.set('RC1', adapter);
+
+    const p = svc.stopBot('RC1');
+    await vi.advanceTimersByTimeAsync(60_000);
+    await p;
+
+    expect(reconcileRun).toHaveBeenCalledWith('RC1', 'ETH/USDT', adapter);
+  });
+
+  it('stopBot 最终对账延迟二次执行：关闭 close 单落库 fire-and-forget 与 REST 可见性竞态窗口', async () => {
+    const { svc, reconcileRun } = makeSvc();
+    const adapter = { getPosition: vi.fn().mockResolvedValue({ baseAssetQty: 0 }) };
+    (svc as any).sessionAdapterMap.set('RC1', adapter);
+
+    const p = svc.stopBot('RC1');
+    await vi.advanceTimersByTimeAsync(60_000);
+    await p;
+    // stopBot 返回时立即对账应已完成一次，延迟补拉是第二次
+    expect(reconcileRun).toHaveBeenCalledTimes(2);
+    expect(reconcileRun).toHaveBeenLastCalledWith('RC1', 'ETH/USDT', adapter);
+  });
+
+  it('stopBot 兜底强平时为强平单落库 CLOSE Order 行（否则强平成交永远无法归属本 run）', async () => {
+    // forceCloseResidualAfterStop 直接调 adapter.closePosition，不经 runner 的
+    // emitCloseOrderPlaced：没有 Order 行，resolveOrder 匹配不上，即使对账拉到
+    // 强平成交也只能丢弃（盈亏与持仓永久漂移）。
+    const { svc, orderCreate } = makeSvc();
+    const adapter = {
+      getPosition: vi.fn().mockResolvedValue({ symbol: 'ETH/USDT', baseAssetQty: -3.877, entryPrice: 1680 }),
+      closePosition: vi.fn().mockResolvedValue({ orderId: 'force-close-1', filledQty: 3.877, avgFillPrice: 1679.5 }),
+    };
+    (svc as any).sessionAdapterMap.set('RC1', adapter);
+
+    const p = svc.stopBot('RC1');
+    await vi.advanceTimersByTimeAsync(60_000);
+    await p;
+
+    expect(adapter.closePosition).toHaveBeenCalledWith('ETH/USDT', 'SHORT');
+    expect(orderCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        runId: 'run-id-1',
+        exchangeOrderId: 'force-close-1',
+        orderType: 'CLOSE',
+        side: 'BUY', // 空头残留 → 买入平仓
+      }),
+    });
+  });
+
+  it('stopBot 清理该 run 的漂移观测状态（runCode 复用时不残留上 episode 计数，code-review M5）', async () => {
+    // runCode 跨重启复用：停止时若漂移 episode 未结束，残留的 consecutive=1 会让
+    // 重启后的首次观测立即确认漂移（绕过双观测防过期快照保护）。
+    const { svc } = makeSvc();
+    const adapter = { getPosition: vi.fn().mockResolvedValue({ baseAssetQty: 0 }) };
+    (svc as any).sessionAdapterMap.set('RC1', adapter);
+    (svc as any).driftObservations.set('RC1', { consecutive: 1, alerted: false });
+
+    const p = svc.stopBot('RC1');
+    await vi.advanceTimersByTimeAsync(60_000);
+    await p;
+
+    expect((svc as any).driftObservations.has('RC1')).toBe(false);
+  });
+});
+
+describe('TradingEngineService.startBot — 复用存量 run 时按交易所持仓校正 PnL 状态（P1）', () => {
+  const configRecord = {
+    id: 'cfg1', accountId: 'cred1', symbol: 'ETH/USDT', direction: 'LONG',
+    takeProfitPrice: 2200, mainGridCount: 78, mainGridStep: 5, mainGridPortionSize: 0.05,
+    leverage: 25, stopLossGridCount: 4, stopLossGridStep: 2, isolationStep: null,
+    reorderThreshold: 0.0002, trailingEntry: false, trailingCallbackRate: null, entryPrice: null,
+  };
+
+  function makeSvc(opts: { run: Record<string, unknown> | null; position?: unknown; positionError?: Error }) {
+    const existingRun = opts.run;
+    let currentRun = existingRun;
+    const runUpdate = vi.fn().mockImplementation((args: { data: Record<string, unknown> }) => {
+      currentRun = currentRun ? { ...currentRun, ...args.data } : currentRun;
+      return Promise.resolve(currentRun);
+    });
+    const runCreate = vi.fn().mockImplementation((args: { data: Record<string, unknown> }) =>
+      Promise.resolve({ id: 'run-new', ...args.data }),
+    );
+    const prisma = {
+      box: { findUnique: vi.fn().mockResolvedValue(configRecord) },
+      run: {
+        findUnique: vi.fn().mockImplementation(() => Promise.resolve(currentRun)),
+        update: runUpdate,
+        create: runCreate,
+      },
+    };
+    const legacyAdapter = {
+      fetchPosition: opts.positionError
+        ? vi.fn().mockRejectedValue(opts.positionError)
+        : vi.fn().mockResolvedValue(opts.position),
+    };
+    const adapterFactory = { createAdapter: vi.fn().mockReturnValue(legacyAdapter) };
+    const credentialService = {
+      findOneWithSecrets: vi.fn().mockResolvedValue({
+        isActive: true, exchangeId: 'okx', accountId: 'a1', apiKey: 'k', apiSecret: 's', passphrase: null,
+      }),
+    };
+    const notify = { createAndBroadcast: vi.fn().mockResolvedValue({}) };
+    const reconcileRun = vi.fn().mockResolvedValue({ newFillsCount: 0 });
+    const svc = new TradingEngineService(
+      prisma as any, adapterFactory as any, credentialService as any, {} as any, {} as any,
+      {} as any, {} as any,
+      { seedRealizedPnl: vi.fn(), clearRealizedPnl: vi.fn() } as any,
+      { reconcileRun } as any, notify as any,
+    );
+    const startRunner = vi.fn().mockResolvedValue({ fake: 'runner' });
+    (svc as any).startRunner = startRunner;
+    return {
+      svc, runUpdate, runCreate, notify, startRunner, legacyAdapter, reconcileRun,
+      /** 模拟 reconcile 补录成交后台账回到交易所真值 */
+      applyReconciledLedger: (qty: number, avgCost: number) => {
+        if (currentRun) currentRun = { ...currentRun, pnlSignedPosition: qty, pnlAvgCost: avgCost };
+      },
+    };
+  }
+
+  it('存量 run 台账持仓与交易所漂移时，启动前以交易所为准重锚 pnlSignedPosition/pnlAvgCost', async () => {
+    // 2026-07-27 OKX 实测：停止丢失平仓成交后重启，台账 4.716 vs 交易所 2.35，
+    // 旧成本（1966.64）污染后续所有卖出的已实现盈亏，账面失真约 -57u。
+    const { svc, runUpdate, notify, startRunner } = makeSvc({
+      run: {
+        id: 'run-1', runCode: 'RC1', state: 'STOPPED', endedAt: new Date(),
+        pnlSignedPosition: 4.716, pnlAvgCost: 1921.09, realizedPnl: -139,
+      },
+      position: { symbol: 'ETH/USDT', side: 'long', qty: 2.35, avgCost: 1959.72, unrealizedPnl: 0, leverage: 25, marginType: 'cross' },
+    });
+
+    await svc.startBot('cfg1', 'RC1');
+
+    expect(runUpdate).toHaveBeenCalledWith({
+      where: { id: 'run-1' },
+      data: expect.objectContaining({ pnlSignedPosition: 2.35, pnlAvgCost: 1959.72 }),
+    });
+    expect(notify.createAndBroadcast).toHaveBeenCalledWith(
+      expect.objectContaining({ code: 'POSITION_LEDGER_REANCHORED' }),
+    );
+    expect(startRunner).toHaveBeenCalled();
+  });
+
+  it('偏差在一个格子以内时不改动台账（正常启停的微差免打扰）', async () => {
+    const { svc, runUpdate, notify, startRunner } = makeSvc({
+      run: {
+        id: 'run-1', runCode: 'RC1', state: 'STOPPED', endedAt: new Date(),
+        pnlSignedPosition: 2.38, pnlAvgCost: 1920, realizedPnl: -10,
+      },
+      position: { symbol: 'ETH/USDT', side: 'long', qty: 2.35, avgCost: 1959.72, unrealizedPnl: 0, leverage: 25, marginType: 'cross' },
+    });
+
+    await svc.startBot('cfg1', 'RC1');
+
+    expect(runUpdate).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ pnlSignedPosition: expect.any(Number) }) }),
+    );
+    expect(notify.createAndBroadcast).not.toHaveBeenCalledWith(
+      expect.objectContaining({ code: 'POSITION_LEDGER_REANCHORED' }),
+    );
+    expect(startRunner).toHaveBeenCalled();
+  });
+
+  it('交易所持仓查询失败时仅告警不阻塞启动', async () => {
+    const { svc, runUpdate, startRunner } = makeSvc({
+      run: {
+        id: 'run-1', runCode: 'RC1', state: 'STOPPED', endedAt: new Date(),
+        pnlSignedPosition: 4.716, pnlAvgCost: 1921.09, realizedPnl: -139,
+      },
+      positionError: new Error('exchange 5xx'),
+    });
+
+    await svc.startBot('cfg1', 'RC1');
+
+    expect(runUpdate).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ pnlSignedPosition: expect.any(Number) }) }),
+    );
+    expect(startRunner).toHaveBeenCalled();
+  });
+
+  it('新建 run 不做重锚（PnL 状态已由 BUG-04 的交易所持仓 seed 直接写入）', async () => {
+    const { svc, runUpdate, runCreate, startRunner } = makeSvc({
+      run: null,
+      position: { symbol: 'ETH/USDT', side: 'long', qty: 2.35, avgCost: 1959.72, unrealizedPnl: 0, leverage: 25, marginType: 'cross' },
+    });
+
+    await svc.startBot('cfg1', 'RC1');
+
+    expect(runCreate).toHaveBeenCalled();
+    expect(runUpdate).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ pnlSignedPosition: expect.any(Number) }) }),
+    );
+    expect(startRunner).toHaveBeenCalled();
+  });
+
+  it('复用存量 run 启动时先做成交对账（补录停止时丢失的平仓成交），再按需重锚（code-review 建议）', async () => {
+    // 直接重锚而不先对账：迟到的平仓成交之后被 sweep 补录时，会在重锚后的干净
+    // 状态上重复应用（空仓 → phantom 空仓）。对账优先让真实成交先入账，
+    // 重锚退化为兜底。对账也必须先于重锚执行。
+    const order: string[] = [];
+    const { svc, runUpdate, reconcileRun, startRunner } = makeSvc({
+      run: {
+        id: 'run-1', runCode: 'RC1', state: 'STOPPED', endedAt: new Date(),
+        pnlSignedPosition: 4.716, pnlAvgCost: 1921.09, realizedPnl: -139,
+      },
+      position: { symbol: 'ETH/USDT', side: 'long', qty: 2.35, avgCost: 1959.72, unrealizedPnl: 0, leverage: 25, marginType: 'cross' },
+    });
+    reconcileRun.mockImplementation(async () => {
+      order.push('reconcile');
+      return { newFillsCount: 0 };
+    });
+    runUpdate.mockImplementation((args: { data: Record<string, unknown> }) => {
+      if ('pnlSignedPosition' in args.data) order.push('reanchor');
+      return Promise.resolve({ ...args.data });
+    });
+
+    await svc.startBot('cfg1', 'RC1');
+
+    expect(reconcileRun).toHaveBeenCalledWith('RC1', 'ETH/USDT', expect.anything());
+    expect(order).toEqual(['reconcile', 'reanchor']);
+    expect(startRunner).toHaveBeenCalled();
+  });
+
+  it('启动前对账已把台账拉回交易所真值时，不再重锚（真实成交入账优于盲重置）', async () => {
+    const { svc, runUpdate, notify, reconcileRun, applyReconciledLedger } = makeSvc({
+      run: {
+        id: 'run-1', runCode: 'RC1', state: 'STOPPED', endedAt: new Date(),
+        pnlSignedPosition: 4.716, pnlAvgCost: 1921.09, realizedPnl: -139,
+      },
+      position: { symbol: 'ETH/USDT', side: 'long', qty: 2.35, avgCost: 1959.72, unrealizedPnl: 0, leverage: 25, marginType: 'cross' },
+    });
+    reconcileRun.mockImplementation(async () => {
+      applyReconciledLedger(2.35, 1959.72); // 平仓成交补录入账后，台账回到交易所真值
+      return { newFillsCount: 3 };
+    });
+
+    await svc.startBot('cfg1', 'RC1');
+
+    expect(runUpdate).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ pnlSignedPosition: expect.any(Number) }) }),
+    );
+    expect(notify.createAndBroadcast).not.toHaveBeenCalledWith(
+      expect.objectContaining({ code: 'POSITION_LEDGER_REANCHORED' }),
+    );
+  });
+});
+
+describe('TradingEngineService.checkPositionDrift — 确认漂移后自愈重锚（P2）', () => {
+  function makeSvc(run: Record<string, unknown>) {
+    const runUpdate = vi.fn().mockResolvedValue({});
+    const prisma = {
+      run: {
+        findUnique: vi.fn().mockResolvedValue(run),
+        update: runUpdate,
+      },
+    };
+    const notify = { createAndBroadcast: vi.fn().mockResolvedValue({}) };
+    const svc = new TradingEngineService(
+      prisma as any, {} as any, {} as any, {} as any, {} as any,
+      {} as any, {} as any, {} as any, {} as any, notify as any,
+    );
+    return { svc, runUpdate, notify };
+  }
+
+  const driftedRun = {
+    id: 'run-1', runCode: 'RC1', pnlSignedPosition: 4.716,
+    configSnapshot: { mainGridPortionSize: 0.05 },
+  };
+  const driftedRunner = {
+    getState: () => ({ position: { baseAssetQty: 2.35, entryPrice: 1959.72 } }),
+  };
+
+  it('首次观测到漂移只计数，不重锚不通知（过期快照活不过第二次复查）', async () => {
+    const { svc, runUpdate, notify } = makeSvc(driftedRun);
+
+    await (svc as any).checkPositionDrift('RC1', driftedRunner);
+
+    expect(runUpdate).not.toHaveBeenCalled();
+    expect(notify.createAndBroadcast).not.toHaveBeenCalled();
+  });
+
+  it('连续第二次观测到漂移 → 以交易所为准重锚台账持仓/成本并通知', async () => {
+    // 旧行为只发 POSITION_DRIFT_DETECTED 告警、机器人照跑（2026-07-27 OKX 连发 8 次
+    // 无人处理，台账虚高 2.32 ETH 持续 3 天）。确认漂移后应自愈重锚。
+    const { svc, runUpdate, notify } = makeSvc(driftedRun);
+
+    await (svc as any).checkPositionDrift('RC1', driftedRunner);
+    await (svc as any).checkPositionDrift('RC1', driftedRunner);
+
+    expect(runUpdate).toHaveBeenCalledWith({
+      where: { id: 'run-1' },
+      data: { pnlSignedPosition: 2.35, pnlAvgCost: 1959.72 },
+    });
+    expect(notify.createAndBroadcast).toHaveBeenCalledWith(
+      expect.objectContaining({ code: 'POSITION_LEDGER_REANCHORED' }),
+    );
+  });
+
+  it('观测计数随差值恢复清零（单次漂移观测不重锚），可响应下一次独立漂移', async () => {
+    const { svc, runUpdate, notify } = makeSvc(driftedRun);
+    const okRunner = {
+      getState: () => ({ position: { baseAssetQty: 4.716, entryPrice: 1921 } }),
+    };
+
+    await (svc as any).checkPositionDrift('RC1', driftedRunner); // 计数 1
+    await (svc as any).checkPositionDrift('RC1', okRunner);      // 恢复 → 清零
+    await (svc as any).checkPositionDrift('RC1', driftedRunner); // 重新计数 1
+
+    expect(runUpdate).not.toHaveBeenCalled();
+    expect(notify.createAndBroadcast).not.toHaveBeenCalled();
+  });
+
+  it('交易所已空仓时重锚为 0 持仓 0 成本（新会话从干净状态起算）', async () => {
+    const { svc, runUpdate } = makeSvc(driftedRun);
+    const flatRunner = {
+      getState: () => ({ position: { baseAssetQty: 0, entryPrice: 0 } }),
+    };
+
+    await (svc as any).checkPositionDrift('RC1', flatRunner);
+    await (svc as any).checkPositionDrift('RC1', flatRunner);
+
+    expect(runUpdate).toHaveBeenCalledWith({
+      where: { id: 'run-1' },
+      data: { pnlSignedPosition: 0, pnlAvgCost: 0 },
+    });
+  });
+});
+
+describe('TradingEngineService.getMarketConstraints — 箱体保存前最小下单量预校验取数', () => {
+  function makeSvc(opts: {
+    credential?: { exchangeId: string; accountId: string; apiKey: string; apiSecret: string; passphrase?: string; environment: string } | null;
+    getMarketInfo?: ReturnType<typeof vi.fn>;
+  }) {
+    const findOneWithSecrets = vi.fn().mockResolvedValue(opts.credential ?? null);
+    const getMarketInfo = opts.getMarketInfo ?? vi.fn().mockResolvedValue({ minQty: 0.001, minNotional: 20, stepSize: 0.001 });
+    const createAdapter = vi.fn().mockReturnValue({ getMarketInfo });
+
+    const svc = new TradingEngineService(
+      {} as any,
+      { createAdapter } as any,
+      { findOneWithSecrets } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+    return { svc, findOneWithSecrets, createAdapter, getMarketInfo };
+  }
+
+  const credential = {
+    exchangeId: 'binance', accountId: 'acc1', apiKey: 'k', apiSecret: 's',
+    passphrase: undefined, environment: 'live',
+  };
+
+  it('正常拉取时返回 minQty/minNotional/stepSize', async () => {
+    const { svc, getMarketInfo } = makeSvc({ credential });
+
+    const result = await svc.getMarketConstraints('cred-1', 'ETH/USDT');
+
+    expect(getMarketInfo).toHaveBeenCalledWith('ETH/USDT');
+    expect(result).toEqual({ minQty: 0.001, minNotional: 20, stepSize: 0.001 });
+  });
+
+  it('凭证不存在时降级返回 null（不阻断箱体保存）', async () => {
+    const { svc } = makeSvc({ credential: null });
+
+    const result = await svc.getMarketConstraints('cred-missing', 'ETH/USDT');
+
+    expect(result).toBeNull();
+  });
+
+  it('getMarketInfo 拉取失败（网络/鉴权等不确定错误）时降级返回 null', async () => {
+    const { svc } = makeSvc({
+      credential,
+      getMarketInfo: vi.fn().mockRejectedValue(new Error('network')),
+    });
+
+    const result = await svc.getMarketConstraints('cred-1', 'ETH/USDT');
+
+    expect(result).toBeNull();
   });
 });

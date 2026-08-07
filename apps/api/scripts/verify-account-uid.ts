@@ -22,6 +22,7 @@ async function main() {
       apiKey: crypto.decrypt(c.apiKey),
       apiSecret: crypto.decrypt(c.apiSecret),
       passphrase: c.passphrase ? crypto.decrypt(c.passphrase) : undefined,
+      environment: c.environment as "demo" | "live",
     });
     try {
       const uid = await adapter.getAccountUid();

@@ -29,13 +29,13 @@ So với "mua và giữ": mua và giữ chỉ có lãi khi cuối cùng giá tă
 ## 🤔 Trước khi chơi lưới, hãy tự hỏi mình năm câu này
 
 **Giá vẫn đang rơi, sao lưới của bạn lại vội chất đầy vị thế ngay trên đỉnh?**
-Lưới gốc cứ giá bước vào khoảng là mở vị thế ngay. GridPilot **vào lệnh theo dõi (trailing entry)**: bám đáy trước, chờ hồi phục 0.2% xác nhận đã vững mới vào lệnh — không hứng dao rơi, không đứng đỉnh.
+Lưới gốc cứ giá bước vào khoảng là mở vị thế ngay. GridPilot **vào lệnh theo dõi (trailing entry)**: bám đáy trước, chờ hồi phục 0.2% xác nhận đã vững mới vào lệnh — không hứng dao rơi, không đứng đỉnh. (Chỉ theo dõi khi giá bước vào cửa sổ kích hoạt theo hướng thua lỗ; nếu giá từ sâu hơn quay trở lại khoảng theo hướng chốt lời thì bỏ qua theo dõi và chạy trực tiếp.)
 
 **Thị trường đổi từng giây, sao lệnh của bạn treo lên rồi nằm im?**
-GridPilot ra quyết định lại mỗi lần giá cập nhật: cần hủy thì hủy, cần sửa thì sửa, có những thời điểm trên sổ lệnh chẳng có lệnh nào; giá bất lợi thà từ chối lệnh còn hơn đuổi giá, treo được Maker (0.02%) thì tuyệt đối không nộp phí Taker (0.05%) oan uổng.
+GridPilot ra quyết định lại mỗi lần giá cập nhật: cần hủy thì hủy, cần sửa thì sửa, có những thời điểm trên sổ lệnh chẳng có lệnh nào; giá thuận lợi thì bám sổ lệnh chốt giá tối ưu, giá bất lợi thà ngắt mạch từ chối lệnh, treo được Maker (0.02%) thì tuyệt đối không nộp phí Taker (0.05%) oan uổng. Việc bám giá này không có rủi ro giảm giá: nếu giá tiếp tục rơi qua giá lưới, hệ thống bám theo và mua được giá rẻ hơn nữa; nếu giá hồi lại mà chưa phá vỡ đường trên, lệnh vẫn có thể khớp ở giá gốc — theo mô hình phá sản của con bạc (gambler's ruin) chuẩn, xác suất thực sự lỡ khớp lệnh là rất nhỏ — lợi nhuận thêm là nhặt được, không nhặt được cũng chẳng lỗ.
 
 **Giá nhảy một phát 5–10 USDT, lưới của bạn ngoài đứng nhìn ra còn làm được gì?**
-Lệnh tĩnh chỉ ăn được cái giá chết trên đường lưới. GridPilot chủ động ăn lệnh thị trường khi chênh lệch vượt quá 2 lần phí Taker, khóa luôn phần chênh lệch vượt bước lưới vào túi — đo thực tế cho thấy sàn nào sổ lệnh càng "xù xì" thì lợi nhuận vượt mức càng cao.
+Lệnh tĩnh chỉ ăn được cái giá chết trên đường lưới. GridPilot chủ động ăn lệnh khi giá lệch khỏi giá lý thuyết của lưới vượt ngưỡng (mặc định 0.1% ≈ 2× phí Taker, có thể điều chỉnh), khóa luôn phần chênh lệch vượt bước lưới vào túi — đo thực tế cho thấy sàn nào sổ lệnh càng "xù xì" thì lợi nhuận vượt mức càng cao.
 
 **Chỉ mới thủng nhẹ thoáng qua, sao phải xả toàn bộ vị thế bằng một lệnh thị trường?**
 Xả một nhát vừa tốn phí Taker, vừa đánh mất cú hồi. GridPilot **giảm vị thế từng nấc bằng lệnh giới hạn** trong vùng đệm cắt lỗ; giá hồi lại, phần vị thế còn lại tiếp tục kiếm tiền ngay. Chỉ khi thủng đường thanh lý, lệnh điều kiện chốt chặn cuối cùng mới tiếp quản một lần.
@@ -48,8 +48,8 @@ GridPilot cấu hình sẵn nhiều khoảng giá không chồng lấn, giá bư
 | Khía cạnh | Lưới gốc của sàn | GridPilot |
 |------|----------------|-----------|
 | **Cách ra quyết định** | Đặt lệnh tĩnh hàng loạt, treo xong không nhúc nhích | Tự động theo bảng giá: mỗi lần giá cập nhật đều đánh giá lại rồi mới đặt/sửa/hủy lệnh động, không phải lúc nào cũng có lệnh treo |
-| **Chất lượng khớp lệnh** | Lệnh tĩnh chỉ ăn được giá trên đường lưới, chênh lệch vượt mức khi giá nhảy vọt trôi qua trước mắt | Bám giá mua 1/bán 1 để chốt giá tối ưu; chênh lệch vượt 2× phí thì chủ động ăn lệnh khóa lợi nhuận vượt mức; giá bất lợi từ chối lệnh thẳng |
-| **Thời điểm vào lệnh** | Vào khoảng giá là mở vị thế ngay | Vào lệnh theo dõi: bám đáy, xác nhận hồi phục 0.2% mới mở vị thế |
+| **Chất lượng khớp lệnh** | Lệnh tĩnh chỉ ăn được giá trên đường lưới, chênh lệch vượt mức khi giá nhảy vọt trôi qua trước mắt | Bám sổ lệnh chốt giá tối ưu, giá khớp không tệ hơn giá lý thuyết; giá lệch khỏi giá lý thuyết vượt ngưỡng (mặc định ≈2× phí) thì chủ động ăn lệnh khóa lợi nhuận vượt mức; giá bất lợi ngắt mạch từ chối lệnh |
+| **Thời điểm vào lệnh** | Vào khoảng giá là mở vị thế ngay | Vào lệnh theo dõi: khi giá bước vào theo hướng thua lỗ thì bám đáy, chỉ mở vị thế sau khi xác nhận hồi phục (mặc định 0.2%) |
 | **Cắt lỗ** | Xả toàn bộ bằng lệnh thị trường một lần tại một mức giá duy nhất | Vùng đệm cắt lỗ giảm vị thế từng nấc bằng lệnh giới hạn, giá hồi thì phần vị thế còn lại hưởng lợi trực tiếp; đường thanh lý giữ một lệnh điều kiện chốt chặn |
 | **Thích ứng thị trường** | Một khoảng giá cố định | Nhiều khoảng giá không chồng lấn, giá vào khoảng nào kích hoạt khoảng đó, các khoảng còn lại ngủ đông |
 
@@ -65,7 +65,7 @@ GridPilot cấu hình sẵn nhiều khoảng giá không chồng lấn, giá bư
 
 ## 💰 Hiểu rõ phí, dùng mã mời để tiết kiệm khi đăng ký (nhà tài trợ rebateto.me)
 
-Phí giao dịch do sàn thu, **GridPilot không lấy một xu nào**. Cùng một giao dịch, lệnh treo (Maker) ≈0.02%, lệnh ăn (Taker) ≈0.05%. Dưới đòn bẩy và lưới tần suất cao, phí giao dịch sẽ âm thầm bị khuếch đại, ngày qua ngày tích lại không hề nhỏ — GridPilot mặc định đặt lệnh Maker thay bạn, mỗi lệnh tiết kiệm khoảng 0.03%, chỉ khi cơ hội thoáng qua trong chớp mắt mới chủ động ăn lệnh.
+Phí giao dịch do sàn thu, **GridPilot không lấy một xu nào**. Cùng một giao dịch, lệnh treo (Maker) ≈0.02%, lệnh ăn (Taker) ≈0.05%. Các lệnh lưới thường ngày của cả hai bên thực ra đều đi theo Maker, không có chênh lệch phí ở khớp lệnh lưới thường ngày; lợi thế phí của GridPilot nằm ở ba thời điểm then chốt — ① vào lệnh: chờ hồi phục xác nhận rồi mới treo lệnh vào, thay vì mở lệnh thị trường ngay khi vừa vào khoảng; ② cắt lỗ: giảm vị thế từng nấc bằng lệnh giới hạn, thay vì xả toàn bộ bằng một lệnh thị trường; ③ ăn lệnh: chỉ cho phép đi Taker khi chênh lệch vượt mức thực sự lớn hơn phí.
 
 Hơn nữa: **khi đăng ký sàn điền một mã hoàn phí, bạn có thể được hoàn lại lâu dài khoảng 20% (Gate 40%) phí đã trả, tự động vào tài khoản** — coi như được giảm giá thêm cho mỗi giao dịch.
 
@@ -133,20 +133,22 @@ pnpm dev:skip-infra   # API + Web, bỏ qua docker
 ## 🕹️ Hướng dẫn sử dụng
 
 1. **Kết nối sàn giao dịch**: điền API Key/Secret trong phần cài đặt. **Chỉ cấp quyền giao dịch hợp đồng, tuyệt đối không bật quyền rút tiền.**
-2. **Cấu hình lưới**: chọn cặp giao dịch và khoảng giá, thiết lập số ô lưới chính, bước lưới, số lượng mỗi ô, đòn bẩy, đệm cắt lỗ, tham số vào lệnh theo dõi.
+2. **Cấu hình lưới**: chọn cặp giao dịch và hướng (long/short), thiết lập mỏ neo giá chốt lời, số ô/bước lưới chính, số lượng mỗi ô, đòn bẩy, đệm cắt lỗ, tham số vào lệnh theo dõi (biên của hộp được suy ra tự động từ mỏ neo giá chốt lời + số ô và bước lưới).
 3. **Khởi động robot**: vào vào lệnh theo dõi → chạy, frontend hiển thị thời gian thực giá, lệnh treo, khớp lệnh và máy trạng thái.
-4. **Giám sát và thu dọn**: khi chạm chốt lời thì dừng gia tăng vị thế để thu dọn; khi chạm đệm cắt lỗ thì giảm vị thế theo lớp.
+4. **Giám sát và thu dọn**: khi giá chạm đầu chốt lời, lưới chốt từng nấc và thu dọn tự nhiên, sau khi vị thế về không thì thoát chốt lời; rơi vào vùng đệm cắt lỗ thì giảm vị thế từng nấc một cách động.
 
 Tham số then chốt:
 
 | Tham số | Diễn giải |
 |------|------|
 | `takeProfitPrice` | Giá chốt lời (biên chốt lời của hộp) |
+| `direction` | Hướng: LONG (mua lên) / SHORT (bán xuống) |
 | `mainGridCount` / `mainGridStep` | Số ô lưới chính / bước mỗi ô (USDT) |
 | `mainGridPortionSize` | Số lượng đặt lệnh mỗi ô |
 | `leverage` | Hệ số đòn bẩy |
 | `stopLossGridCount` / `stopLossGridStep` | Số ô vùng đệm cắt lỗ / bước lưới |
-| `activationPrice` / `trailingCallbackRate` | Giá kích hoạt vào lệnh theo dõi / biên độ hồi |
+| `isolationStep` | Độ rộng dải cách ly (mặc định = bước lưới vùng cắt lỗ) |
+| `activationPrice` / `trailingCallbackRate` | Giá kích hoạt khoảng (mặc định điểm giữa lưới chính) / biên độ hồi của vào lệnh theo dõi |
 | `excessProfitMultiplier` | Hệ số kích hoạt vùng GTC (ngưỡng lợi nhuận vượt mức) |
 
 Tham số đầy đủ xem tại [`docs/STRATEGY_SPEC.md`](docs/STRATEGY_SPEC.md).

@@ -1,9 +1,12 @@
-import { IsString, IsOptional, IsBoolean } from "class-validator";
-import { ExchangeId } from "@gridpilot/shared-types";
+import { IsString, IsOptional, IsBoolean, IsIn } from "class-validator";
+import { ExchangeId, ExchangeEnvironment } from "@gridpilot/shared-types";
 
 export class CreateCredentialDto {
   @IsString()
   exchangeId: ExchangeId;
+
+  @IsIn(["demo", "live"])
+  environment: ExchangeEnvironment;
 
   @IsString()
   accountId: string;

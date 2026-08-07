@@ -129,6 +129,11 @@ export class GridBotRunner {
    * 拉取失败、适配器不支持、或交易所未暴露该值（如 Gate adapter 当前硬编码 0）时保持 0，
    * 策略降级为不做名义预校验（旧行为）——此时该交易所上不享受本地小单拦截。 */
   private marketMinNotional = 0;
+  /** 交易所最小下单量（基础币单位，启动时拉取一次，与 marketMinNotional 同源同生命周期）。
+   * 此前只有 minNotional 被注入策略配置，minQty 一直算了却没被 isPlaceable() 用上——
+   * 对 minNotional=0 的交易所（如 Gate.io）等于完全没有最小下单量兜底。拉取失败时保持 0，
+   * 降级为不做数量预校验（旧行为）。 */
+  private marketMinQty = 0;
 
   private fsmState: BotFsmState = { kind: 'HOLD', reason: 'initializing' };
   private position: Position | null = null;
@@ -327,6 +332,8 @@ export class GridBotRunner {
       await this.ensureEmergencyStopLoss();
     }
 
+    await this.ensureOneWayPositionMode();
+
     await this.adapter.setLeverage(this.config.symbol, this.config.leverage);
     this.logger.log(`[${this.config.runCode}] Leverage set to ${this.config.leverage}x`);
 
@@ -345,6 +352,46 @@ export class GridBotRunner {
 
     this.mainLoopPromise = this.runMainLoop();
     this.logger.log(`[${this.config.runCode}] Runner started`);
+  }
+
+  /**
+   * 启动序列第一步（见 exchange-adapter.interface.ts 顶部注释）：确保账户为单向持仓。
+   * 全代码库的下单路径都按单向模式设计，从不发 posSide/positionSide；账户若处于
+   * 对冲模式，OKX 会对每一笔下单回 "Parameter posSide error"（2026-08-04 生产事故：
+   * 连续拒单 592 次、网格停摆数小时）。
+   *
+   * 先读后写：已是单向就不动账户，避免对用户账户做无谓的全局改动。
+   * 切换失败（交易所在有持仓/挂单时会拒绝）不阻断启动——此时已建仓位还需要
+   * 后续的止损与网格管理，中断启动比模式不对更危险。
+   *
+   * 注意失败后的告警很弱：posSide 类拒单不在 actionable-rejections 白名单里，
+   * 不会触发逐笔 ORDER_REJECTED 通知，只有连续 50 次拒单后的 STOPPED_REJECTIONS
+   * 会响一次——正是这个弱信号让 2026-08-04 那次停摆持续了数小时。
+   *
+   * 读失败与写失败分别记录：前者是查不到模式（多为瞬时 5xx/限流），后者是切换被
+   * 交易所拒绝（通常是有持仓），两者的处置方向完全不同，混为一谈会误导排查。
+   */
+  private async ensureOneWayPositionMode(): Promise<void> {
+    let alreadyOneWay: boolean;
+    try {
+      alreadyOneWay = await this.adapter.getPositionMode();
+    } catch (err) {
+      this.logger.warn(
+        `[${this.config.runCode}] getPositionMode failed; skipping position-mode check, account may stay in hedge mode and reject every order: ${(err as Error).message}`,
+      );
+      return;
+    }
+
+    if (alreadyOneWay) return;
+
+    try {
+      await this.adapter.setPositionMode(true);
+      this.logger.log(`[${this.config.runCode}] Position mode switched to one-way`);
+    } catch (err) {
+      this.logger.warn(
+        `[${this.config.runCode}] setPositionMode failed (exchange refuses while positions/orders exist); account stays in hedge mode and will reject every order until flattened: ${(err as Error).message}`,
+      );
+    }
   }
 
   async stop(): Promise<{ cancelFailed: string[] }> {
@@ -1642,7 +1689,8 @@ export class GridBotRunner {
     try {
       const info = await this.adapter.getMarketInfo(this.config.symbol);
       this.marketMinNotional = info.minNotional ?? 0;
-      this.logger.log(`[${this.config.runCode}] Market constraints: minNotional=${this.marketMinNotional}`);
+      this.marketMinQty = info.minQty ?? 0;
+      this.logger.log(`[${this.config.runCode}] Market constraints: minNotional=${this.marketMinNotional}, minQty=${this.marketMinQty}`);
     } catch (err) {
       this.logger.warn(
         `[${this.config.runCode}] getMarketInfo failed, skipping minNotional pre-check: ${(err as Error).message}`,
@@ -1663,6 +1711,7 @@ export class GridBotRunner {
       isolationStep: this.config.isolationStep,
       gtcThreshold: this.config.gtcThreshold,
       minNotional: this.marketMinNotional,
+      minQty: this.marketMinQty,
     };
   }
 

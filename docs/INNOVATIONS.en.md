@@ -52,7 +52,7 @@ As a result, **GridPilot does not necessarily have any grid order resting at any
 | Zone | Trigger condition | Order method | Fee | Economic rationale |
 |------|---------|---------|--------|-----------|
 | **Circuit-break zone** | Price moving unfavorably | No order | 0 | No basic profit guarantee, so don't trade |
-| **POC zone** | Deviation < threshold | Post-Only resting at best bid/ask | **0.02% (Maker)** | Default preference; hold position as a Maker |
+| **POC zone** | Deviation < threshold | Post-Only pegged one tick inside the opposing quote (buy: bestAsk−tick / sell: bestBid+tick) | **0.02% (Maker)** | Default preference; hold position as a Maker |
 | **GTC zone** | Deviation ≥ threshold | Market-take | 0.05% (Taker) | Extra spread > the additional 0.03% paid, so it's worth it |
 
 **Why we insist on Post-Only patience instead of taking at market**: Take Gate.io as an example (Maker 0.02% / Taker 0.05% / step ≈0.1%):
@@ -65,7 +65,7 @@ Maker fills both sides (assume 50% cycle completion rate): 0.1% − 0.02%×2 = 0
 
 > **Conclusion**: As long as the cycle-completion probability is > 0, Maker's expected profit beats Taker's — because Taker's per-cycle net profit is already zero, so any Maker fill is pure incremental gain. And in a liquid perpetuals market, a Post-Only order resting at best bid/ask typically fills within 1-2 seconds (see STRATEGY_SPEC §7.7) — the cost of waiting is far lower than intuition suggests.
 
-**The economic model of GTC**: The GTC threshold defaults to 0.1%, which equals `ExcessProfitMultiplier(2.0) × takerFee(0.05%)`, roughly 3.3× the "worthwhile minimum threshold" (takerFee − makerFee = 0.03%), leaving a conservative margin. Only when the extra spread profit truly exceeds the additional fee paid do we license a take.
+**The economic model of GTC**: By design, the GTC threshold = `ExcessProfitMultiplier (default 2.0) × takerFee (0.05%)` = 0.1%, roughly 3.3× the "worthwhile minimum threshold" (takerFee − makerFee = 0.03%), leaving a conservative margin; the current implementation takes a fixed default of 0.1%, with the parameter linkage still to be wired up (see STRATEGY_SPEC §7.8 / §13.1 for implementation status). Only when the extra spread profit truly exceeds the additional fee paid do we license a take.
 
 **Value**: Routine fills execute at low Maker cost; we only actively take to lock in excess profit when the extra spread genuinely covers the additional fee; and we spend nothing when conditions are unfavorable. Maker handles low-cost routine fills, GTC handles excess profit on large deviations, and the circuit-break zone handles standing down — the three complement each other to cover every scenario.
 
@@ -78,12 +78,14 @@ Maker fills both sides (assume 50% cycle completion rate): 0.1% − 0.02%×2 = 0
 **What we do**: Instead of waiting for the price to fall to the theoretical price before ordering, we **repeatedly pre-place orders chasing the best bid/ask**, striving for a Maker fill — or a take on a large deviation.
 
 **Technical details**:
-- **Rest at best bid/ask**: A POC order's price ≠ the theoretical grid price, but the current `bestBid` (for buying) / `bestAsk` (for selling) — meaning we become the current top of book, so the next incoming market order fills us as a Maker, and at a better price than the theoretical price (extra gain).
+- **Pegged one tick inside the opposing quote**: A POC order's price ≠ the theoretical grid price; it is `min(theoretical price, bestAsk − tick)` when buying and `max(theoretical price, bestBid + tick)` when selling — when the spread is wider than one tick, this sits inside the book as the best quote on the market, so the next incoming market order fills us as a Maker, at a price no worse than — and usually better than — the theoretical price (extra gain). Pegging this way also avoids the Post-Only rejections that resting directly at bestBid/bestAsk would suffer from slight price moves.
 - **Tracking amendment**: Every tick we check — ① POC→GTC upgrade (fleeting opportunities take priority to be taken); ② if the order book shifts beyond the `current price × 0.02%` amendment threshold, cancel and re-place to keep the best quote; ③ if it enters the circuit-break zone, cancel and wait.
 - **Serialized execution**: At any moment there is at most one active grid order Pending; order fill/cancel events themselves also trigger "recompute target position → chase ordering," without waiting for the next tick, so we never miss the best moment.
 - **Stop-loss priority**: Once the stop-loss process begins, all in-progress grid ordering is immediately abandoned to ensure no new position is opened.
 
 **Value**: It turns "wait for the price to come" into "chase the best price," maximizing both the Maker fill rate and the price advantage of fills.
+
+**Why chasing carries no downside risk**: When price reaches the theoretical grid price, the odds of it continuing in the favorable versus unfavorable direction are roughly fifty-fifty. If it keeps going our way, the system chases and fills at an even better price — every tick of improvement is pure gain. If it turns against us, as long as it hasn't crossed the next grid line, the system can still fill at the original theoretical price — breaking even with a static grid. Under a standard gambler's-ruin model, the probability of truly missing the fill — crossing the next line before ever getting a price back — is negligible. In other words, "extra profit is free; missing it costs nothing": chasing produces **incremental gains (alpha) with no downside** — buys are only ever cheaper, sells only ever more profitable than a static grid. By the same token, the strategy is insensitive to network latency: it profits by *waiting*, not *racing*, so no server room or leased line is needed; at worst, latency steals part of the bonus — never the grid's underlying profit.
 
 ---
 
@@ -95,7 +97,7 @@ Maker fills both sides (assume 50% cycle completion rate): 0.1% − 0.02%×2 = 0
 
 **Technical details**:
 - Track the extreme (the low for long / the high for short); the trigger price = `extreme × (1 ± callback rate)`, and once the rebound meets the bar we enter RUNNING.
-- If the price keeps crossing past the activation price (further toward the take-profit side) → the trailing window closes and we return to listening; if it crosses the full-position line → go straight into the stop-loss process.
+- If the price keeps crossing past the activation price (further toward the take-profit side) → the trailing window closes and we return to listening; if it crosses the liquidation line (and a stop-loss zone is configured) → go straight into the stop-loss process (LIQUIDATING).
 - **Clever touch**: if the price enters the range moving **toward the take-profit direction** (the loss side already behind it), we **skip trailing and go straight to RUNNING** — here the entry cost is closer to the liquidation side, the per-grid take-profit is higher, and waiting would only forgo gains.
 
 **Value**: In essence this is "don't predict the bottom, only confirm you've already left it." No matter how far it has fallen, as long as a rebound is confirmed we enter safely, dodging the role of catching the falling top.
@@ -191,7 +193,7 @@ amount to operate = target position − exchange's latest actual position     �
 |------|----------------|-----------|
 | **Ordering mindset** | Batch static orders, leave them static and wait to be hit | Event-driven watching; observe before deciding; not necessarily any resting order at a given moment |
 | **Execution quality** | Static orders only ever earn the grid-line price; the excess spread in a jump passes by | Three-zone pricing: POC fills as low-cost Maker / GTC locks excess spread / circuit-break refuses |
-| **Order price** | Fixed theoretical grid price | Chases best bid/ask, amends to keep the best quote |
+| **Order price** | Fixed theoretical grid price | Pegged one tick inside the opposing quote to sit top-of-book, with chase re-pegging to stay competitive |
 | **Entry timing** | Open immediately on entering the range | Trailing entry confirms a rebound, avoiding getting stuck at the top |
 | **Market adaptation** | Fixed single range | Multiple non-overlapping ranges; activate whichever segment the price enters |
 | **Long/short implementation** | Two mirrored sets of logic | d-space single implementation, short auto-mirrors long |

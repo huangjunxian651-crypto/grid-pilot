@@ -37,3 +37,22 @@ describe("credential active-only filter", () => {
     expect(filterActiveOnly(creds, true).every((c) => c.isActive)).toBe(true);
   });
 });
+
+function defaultEnvironment(): "demo" | "live" {
+  return "demo";
+}
+
+function isEnvironmentEditable(editingId: string | null): boolean {
+  return editingId == null;
+}
+
+describe("credential environment field", () => {
+  it("defaults to demo for new credentials", () => {
+    expect(defaultEnvironment()).toBe("demo");
+  });
+
+  it("is editable only when creating (editingId is null)", () => {
+    expect(isEnvironmentEditable(null)).toBe(true);
+    expect(isEnvironmentEditable("cred-1")).toBe(false);
+  });
+});

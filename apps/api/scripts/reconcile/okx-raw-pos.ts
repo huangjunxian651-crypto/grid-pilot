@@ -13,6 +13,7 @@ async function main() {
     apiSecret: crypto.decrypt(account.apiSecret),
     passphrase: account.passphrase ? crypto.decrypt(account.passphrase) : "",
     accountId: account.accountId,
+    environment: account.environment as "demo" | "live",
   });
   const mapped = await adapter.fetchPosition("ETH/USDT");
   console.log("mapped:", JSON.stringify(mapped));

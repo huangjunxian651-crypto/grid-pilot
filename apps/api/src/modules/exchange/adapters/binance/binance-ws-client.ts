@@ -1,11 +1,13 @@
 // BinanceWsClient — Binance Futures WebSocket 客户端
 // 支持公开行情流和用户数据流
+// 按 environment 路由端点：demo(默认，模拟盘 BINANCE_WS_DEMO) / live(实盘 BINANCE_WS_LIVE)
 // 连接生命周期(重连/心跳/清理)由 ReconnectingWsClient 基类统一管理
 
 import WebSocket from "ws";
 import axios from "axios";
 import { ReconnectingWsClient } from "../shared/reconnecting-ws-client";
-import { BINANCE_REST_DEMO, BINANCE_WS_DEMO } from "./binance.types";
+import { BINANCE_REST_DEMO, BINANCE_WS_DEMO, BINANCE_REST_LIVE, BINANCE_WS_LIVE } from "./binance.types";
+import { ExchangeEnvironment } from "@gridpilot/shared-types";
 
 interface WsMessage {
   e?: string; // event type
@@ -25,12 +27,16 @@ export class BinanceWsClient extends ReconnectingWsClient {
   private isUserDataStream = false;
   private activeStreams: string[] = [];
 
-  constructor(credentials: { apiKey: string; apiSecret: string }, isUserDataStream = false) {
+  constructor(
+    credentials: { apiKey: string; apiSecret: string },
+    isUserDataStream = false,
+    environment: ExchangeEnvironment = "demo",
+  ) {
     super("BinanceWsClient");
     this.apiKey = credentials.apiKey;
     this.apiSecret = credentials.apiSecret;
-    this.baseUrl = BINANCE_REST_DEMO;
-    this.wsUrl = BINANCE_WS_DEMO;
+    this.baseUrl = environment === "live" ? BINANCE_REST_LIVE : BINANCE_REST_DEMO;
+    this.wsUrl = environment === "live" ? BINANCE_WS_LIVE : BINANCE_WS_DEMO;
     this.isUserDataStream = isUserDataStream;
   }
 

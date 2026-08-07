@@ -26,6 +26,8 @@ import { ExchangeAdapterFactory } from '../exchange/exchange-adapter.factory';
 import { AuthGuard } from '../auth/auth.guard';
 import { PrismaService } from '../../prisma/prisma.service';
 import { resolveHistoryRange, bucketEquitySeries, buildCumulativeSavingsSeries, type HistoryRange } from './account/equity-history';
+import { StrategyMetricsService } from './strategy-metrics/strategy-metrics.service';
+import { isMetricsWindow, type MetricsWindow } from './strategy-metrics/strategy-metrics.types';
 
 import { IsString, IsNotEmpty, IsNumber, IsInt, IsIn, IsOptional, IsBoolean } from 'class-validator';
 
@@ -132,6 +134,7 @@ export class TradingEngineController {
     private readonly botManager: BotManagerService,
     private readonly credentials: CredentialService,
     private readonly adapterFactory: ExchangeAdapterFactory,
+    private readonly strategyMetrics: StrategyMetricsService,
   ) {}
 
   @Post('start')
@@ -229,6 +232,20 @@ export class TradingEngineController {
     return detail;
   }
 
+  /** 交易所最小下单量约束，供新增/编辑箱体表单的前端实时预检使用；拉取失败透传 null
+   * （前端据此跳过预检，最终由 addBox/editBox 的服务端校验兜底）。 */
+  @Get('robots/:id/market-constraints')
+  async getMarketConstraints(@Param('id') id: string) {
+    const robot = await this.prisma.robot.findUnique({
+      where: { id },
+      select: { accountId: true, symbol: true },
+    });
+    if (!robot) {
+      throw new NotFoundException(`Robot ${id} not found`);
+    }
+    return this.service.getMarketConstraints(robot.accountId, robot.symbol);
+  }
+
   @Post('robots')
   async createRobot(@Body() dto: CreateRobotDto) {
     try {
@@ -239,6 +256,7 @@ export class TradingEngineController {
       const legacy = this.adapterFactory.createAdapter({
         exchangeId: cred.exchangeId, accountId: cred.accountId,
         apiKey: cred.apiKey, apiSecret: cred.apiSecret, passphrase: cred.passphrase ?? undefined,
+        environment: cred.environment as "demo" | "live",
       });
       let exchangeAccountId: string;
       try {
@@ -251,6 +269,7 @@ export class TradingEngineController {
       }
       const res = await this.botManager.createRobot({
         credentialId: dto.credentialId, symbol: dto.symbol, direction: dto.direction, exchangeAccountId,
+        environment: cred.environment as "demo" | "live",
       });
       return { success: true, robotId: res.id };
     } catch (err) {
@@ -800,5 +819,38 @@ export class TradingEngineController {
       select: { savings: true, filledAt: true },
     });
     return { series: buildCumulativeSavingsSeries(fills, bucketMs), bucketMs };
+  }
+
+  /** 策略评价指标：窗口内全部 RUNNING 机器人 + 汇总行（口径见 spec，逐笔可复算）。 */
+  @Get('metrics/strategy')
+  async getStrategyMetrics(@Query('window') window?: string) {
+    const w = this.parseWindow(window);
+    try {
+      return await this.strategyMetrics.getStrategyMetrics(w);
+    } catch (err) {
+      if (err instanceof HttpException) throw err;
+      throw new InternalServerErrorException({ success: false, error: (err as Error).message });
+    }
+  }
+
+  /** 单机器人明细曲线：窗口内累计净盈亏 + 累计 alpha。 */
+  @Get('metrics/strategy/series')
+  async getStrategySeries(@Query('robotId') robotId?: string, @Query('window') window?: string) {
+    if (!robotId) throw new BadRequestException({ success: false, error: 'robotId is required' });
+    const w = this.parseWindow(window);
+    try {
+      return await this.strategyMetrics.getStrategySeries(robotId, w);
+    } catch (err) {
+      if (err instanceof HttpException) throw err;
+      throw new InternalServerErrorException({ success: false, error: (err as Error).message });
+    }
+  }
+
+  private parseWindow(raw: string | undefined): MetricsWindow {
+    const w = raw ?? '24h';
+    if (!isMetricsWindow(w)) {
+      throw new BadRequestException({ success: false, error: `invalid window: ${w} (expected 24h|7d|30d)` });
+    }
+    return w;
   }
 }

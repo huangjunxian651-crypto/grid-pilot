@@ -11,6 +11,7 @@ import { estimateRebate, isReferralMuted } from "@/lib/referral";
 import { eventsApi } from "@/lib/api";
 import { DateRangePicker, type DateRangeValue, formatLocalDate } from "@/components/history/date-range-picker";
 import { RobotSelect } from "@/components/history/robot-select";
+import { TableScroll } from "@/components/ui/table-scroll";
 
 type RouteKey = "ALL" | "POC" | "GTC" | "UNKNOWN";
 type SortBy = "time" | "notional" | "realizedPnl" | "fee";
@@ -303,7 +304,7 @@ export default function TradeHistoryPage() {
 
       {/* 成交流水表 */}
       <Card pad={0} style={{ borderRadius: 14 }}>
-        <div className="gp-table-scroll">
+        <TableScroll>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr style={{ color: "var(--fg-3)", fontSize: 10, textTransform: "uppercase", letterSpacing: 0.6 }}>
@@ -387,7 +388,7 @@ export default function TradeHistoryPage() {
               })}
             </tbody>
           </table>
-        </div>
+        </TableScroll>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", borderTop: "1px solid var(--border-subtle)" }}>
           <span data-testid="hist-page-total" style={{ fontSize: 11.5, color: "var(--fg-3)" }}>{t("hist.pagination_total", { n: total })}</span>
           <div style={{ display: "flex", gap: 8 }}>

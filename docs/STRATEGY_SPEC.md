@@ -2,7 +2,7 @@
 
 > **文档用途**：面向外包实施团队的完整交易策略规格说明。本文档完整描述策略的设计思想、系统架构、算法逻辑和参数体系，实施方应依据本文档从零开始设计实现，无需参考原有代码。
 >
-> **目标标的**：ETH/USDT 永续合约（兼容 Binance / Gate.io）
+> **目标标的**：ETH/USDT 永续合约（兼容 Binance / Gate.io / OKX）
 > **策略类型**：多段价格区间 · 做多网格 · 实时动态委托
 
 ---
@@ -272,7 +272,7 @@ stopLossGridCount × stopLossGridStep ≤ boxDepth / 5
   如果 d(当前价格) > boxDepth 且 StopLossGridCount > 0（越过清算线 liquidationPrice）：
     → 直接进入 LIQUIDATING 状态（即使仓位为零，也走止损流程）
 ```
-<!-- 2026-05-28 align-with-go: §5.1 此退出路径已在 Go FSM 实现中确认；TS trading-engine 的 fsm/ 模块须实现相同分支，否则追踪模式无法正常退出。 -->
+<!-- 2026-05-28 align-with-go: 此退出路径已在 Go FSM 实现中确认；TS trading-engine 同样已实现（`bot-fsm.ts`，TRAILING_ENTRY → CANCELLED）。 -->
 
 **`TrailingCallbackRate`**：反弹确认比例，例如 `0.002` 代表从极值低点反弹 0.2% 即确认。若配置为 0，默认取 0.2%。
 
@@ -405,12 +405,14 @@ TargetBoughtSize = TargetBoughtGrids × mainGridPortionSize
 
 ### 7.2 下单价格的来源
 
-**关键细节**：POC 单的下单价格 ≠ 网格理论价，而是当前市场的**买一价（买入时）或卖一价（卖出时）**。
+**关键细节**：POC 单的下单价格 ≠ 网格理论价，而是**锚定对手价向内一档**（实现见 `pricing.ts` / `strategy-engine.ts`）：
 
-- 买入时：使用 `bestBid`（当前买一价）挂 Post-Only 单
-- 卖出时：使用 `bestAsk`（当前卖一价）挂 Post-Only 单
+- 买入时：`min(GridPrice, bestAsk − tick)` —— 以卖一价向内一档挂 Post-Only 单
+- 卖出时：`max(GridPrice, bestBid + tick)` —— 以买一价向外一档挂 Post-Only 单
 
-将 Post-Only 单挂在买一价，等同于自己成为当前最优买盘。当下一笔市价卖单进来，以 Maker 身份成交，手续费率仅 0.02%（Taker 为 0.05%），每笔节省 0.03%。同时成交价比网格理论价更优，是额外收益。
+这样设计有两个用意：其一，直接挂在 `bestBid`/`bestAsk` 上，价格微动就可能导致 Post-Only 越价被拒单，锚定对手价向内缩一档可避免；其二，当盘口价差（spread）大于一个 tick 时，该单位于盘口内部、成为全场最优盘口，下一笔市价单进来即以 Maker 身份成交，手续费率仅 0.02%（Taker 为 0.05%），每笔节省 0.03%。成交价不劣于、通常优于网格理论价（买入更低 / 卖出更高），构成额外收益。
+
+> 注：§7.1 的示例为简化起见按零价差（bestAsk = bestBid + 1 tick）描述，此时锚定对手价向内一档即退化为挂在 bestBid 上。
 
 ### 7.3 三区间状态机（定价决策）
 
@@ -500,7 +502,7 @@ Post-Only 单挂出后，系统在**每次收到价格更新时**都会检查是
 
 串行化确保了不会因为仓位计算时序问题产生重复下单或仓位冲突。
 
-**止损优先保障**：所有订单提交（包括初次下单和改单重挂）均有止损优先机制：一旦系统进入止损流程（如价格越过满仓线触发清算，见 §9.2），立即放弃所有进行中的网格下单操作，确保止损触发后不会继续开新仓位。
+**止损优先保障**：所有订单提交（包括初次下单和改单重挂）均有止损优先机制：一旦系统进入止损流程（如价格越过清算线 `liquidationPrice` 触发清算，见 §9.2），立即放弃所有进行中的网格下单操作，确保止损触发后不会继续开新仓位。
 
 ### 7.7 为什么用等待挂单而非直接市价成交
 
@@ -558,7 +560,7 @@ GTC 阈值默认 0.1%，其背后经济含义：
   注：此公式以 takerFee 为基准乘以倍数，结果高于最小阈值（0.03%），是有意保留余量的保守设定
 ```
 
-**实现现状（2026-07 更新）**：GtcThreshold 代码默认 0.1%，且已通过 `effectiveGtcThreshold`（`pricing.ts`）与配置联动——实际生效阈值 = `max(配置阈值, ExcessProfitMultiplier × takerFeeRate)`，即 `ExcessProfitMultiplier` 已接入决策链路，交易所费率变化会随 `takerFeeRate` 自动反映到阈值下限。
+**实现现状（2026-08 勘正）**：阈值函数 `effectiveGtcThreshold`（`pricing.ts`）已实现——设计上的生效阈值 = `max(配置阈值, ExcessProfitMultiplier × takerFeeRate)`。但配置链路尚未接通：Box 表无 `gtcThreshold` 列（恒取默认 0.001），runner 注入策略配置时也未传入 `ExcessProfitMultiplier` / `takerFeeRate`——当前运行时生效阈值恒为默认 0.1%。参数联动接线见 §13.1。
 
 ---
 
@@ -715,7 +717,7 @@ PAUSED ──[USER_RESUME]──► RUNNING（runner 保活，仅复位 Run.stat
 
 **RUNNING 状态**：
 - 每次价格更新：调用目标仓位算法，生成网格买卖指令
-- 定期检查算法单哨兵，补缺缺失的止损条件单（频率要求见 8.5 节）
+- 每个 tick 检查并补齐清算线兜底条件单（`ensureEmergencyStopLoss`；实际频率高于此前建议的 1-2 分钟间隔，见 §13.4）
 - 监测清算触发条件（价格越过清算线 liquidationPrice，`d > boxDepth` 且 stopLossGridCount > 0）
 
 **LIQUIDATING 状态**：
@@ -780,13 +782,13 @@ PAUSED ──[USER_RESUME]──► RUNNING（runner 保活，仅复位 Run.stat
 | `stopLossGridStep` | float | 止损区每格步长（USDT） |
 | `isolationStep` | float | **隔离带宽度**（满仓线 → 止损区起点的缓冲距离，USDT）；0 = 无隔离带。可独立设置；缺省/历史箱体回退 = `stopLossGridStep`。启用止损（`stopLossGridCount > 0`）时须 > 0 |
 | `activationPrice` | float | 区间激活价格（0/省略 = 使用主网格中点 `d = mainGridDepth / 2`）；校验要求落在主网格内 `0 < d(activationPrice) < mainGridDepth` |
-| `trailingCallbackRate` | float | 追踪建仓回调比例（如 0.002 = 0.2%，0 = 不追踪直接建仓） |
-| `excessProfitMultiplier` | float | 超额利润倍数（默认 2.0）；与 `takerFeeRate` 共同决定 GtcThreshold：`GtcThreshold = excessProfitMultiplier × takerFeeRate`。GtcThreshold 当前仍硬编码（0.001），尚未打通此连接（见 §13.1）。 |
-| `reorderThreshold` | float | 改单（撤单重挂）阈值（默认 0.0002 = 0.02%）；bestBid/bestAsk 变动超过 `当前价格 × reorderThreshold` 时触发改单。当前代码中阈值仍硬编码（见 §13.2）。 |
+| `trailingCallbackRate` | float | 追踪建仓回调比例（如 0.002 = 0.2%；0/未设置 = 默认 0.2%；是否启用追踪由 `trailingEntry` 字段控制） |
+| `excessProfitMultiplier` | float | 超额利润倍数（默认 2.0）；设计上与 `takerFeeRate` 共同决定 GtcThreshold：`GtcThreshold = excessProfitMultiplier × takerFeeRate`。当前未接入决策链（配置链路未注入，见 §13.1），且箱体增改 API 暂未暴露该字段，实际恒取 DB 默认值 2.0。 |
+| `reorderThreshold` | float | 改单（撤单重挂）阈值（默认 0.0002 = 0.02%）；盘口价变动超过 `当前价格 × reorderThreshold` 时触发改单。已为 Box 配置字段并接入决策链；箱体增改 API 暂未暴露该字段，经 API 创建的箱体恒取默认值（见 §13.2）。 |
 
 > **派生量（非输入项）**：`fullPositionPrice` / `stopLossStartPrice` / `liquidationPrice` / `boxHighPrice` / `boxLowPrice` 均由 `takeProfitPrice` + 格数步长经 `deriveBoxLines` 推导（见 §三）。`isolationStep` 自 2026-06-16 起为**独立可设字段**（此前恒等于 `stopLossGridStep`）；缺省与历史箱体（值为 null）按 `isolationStep ?? stopLossGridStep` 回退，几何向后兼容。
 
-<!-- 2026-05-28 align-with-go: 引入 GtcThreshold / ReorderThreshold / ExcessProfitMultiplier 三个参数。GtcThreshold 与 ReorderThreshold 在定价层仍硬编码为 0.001 / 0.0002，待参数化，与第十三章优化项一致。 -->
+<!-- 2026-05-28 align-with-go: 引入 GtcThreshold / ReorderThreshold / ExcessProfitMultiplier 三个参数。2026-08 勘正：ReorderThreshold 已参数化并接入决策链（箱体增改 API 未暴露）；GtcThreshold 的阈值函数已实现但配置链路未接通，运行时恒为默认 0.001，见 §13.1。 -->
 <!-- 2026-06-10 short-box-geometry：箱体锚点由 BoxLow/BoxHigh 输入改为 takeProfitPrice + 格数步长；字段名归一化为 takeProfitPrice/mainGridCount/mainGridStep/mainGridPortionSize/stopLossGridCount/stopLossGridStep/activationPrice，与 create-config.dto.ts 一致。 -->
 <!-- 2026-06-16 box-isolation-step-parameter：isolationStep 从「恒等于 stopLossGridStep」解耦为独立可设箱体参数（Box 新增可空列 isolationStep；读取一律 ?? stopLossGridStep 回退，存量箱体几何不变、零回填）。 -->
 
@@ -1011,7 +1013,7 @@ Gate.io 示例：0.05% - 0.02% = 0.03%
 
 ### 13.1 【优先级：高】GtcThreshold 应由参数驱动，而非硬编码
 
-**现状**：GTC 触发阈值硬编码为 `0.001`（0.1%），与配置字段 `ExcessProfitMultiplier` 没有关联。
+**现状**：GTC 触发阈值运行时恒为默认 `0.001`（0.1%）。阈值函数 `effectiveGtcThreshold`（`pricing.ts`）已实现（生效阈值 = `max(配置阈值, ExcessProfitMultiplier × takerFeeRate)`），但配置链路未接通：Box 表无 `gtcThreshold` 列，runner 注入策略配置时未传入 `ExcessProfitMultiplier` / `takerFeeRate`，配置字段 `ExcessProfitMultiplier` 实际为死配置。
 
 **问题**：切换交易所或升级 VIP 费率档位时，需要修改代码而非配置文件。
 
@@ -1028,13 +1030,13 @@ GtcThreshold = ExcessProfitMultiplier × takerFeeRate
 
 将 `takerFeeRate` 作为交易所适配层的参数，由适配层注入；`ExcessProfitMultiplier` 保留为策略参数。
 
-### 13.2 【优先级：高】改单阈值应可配置
+### 13.2 【已完成：参数化】改单阈值可配置
 
-**现状**：改单阈值硬编码为 `currentPrice × 0.0002`（0.02%）。
+**现状**：`reorderThreshold` 已为 Box 配置字段（默认 `0.0002` = 0.02%）并接入决策链（buildBotConfig → StrategyEngine / runner）。
 
-**问题**：Gate.io 价格跳跃频繁（每次跳跃 0.1-0.5 USDT），0.02% 约等于 0.4-1 USDT，在高波动时段会触发非常频繁的撤单重挂，产生大量 API 调用。Binance 价格平滑，0.02% 是合理的。
+**残留**：箱体增改 API（`AddBoxDto` / `EditBoxDto`）暂未暴露该字段，经 API 创建的箱体恒取 schema 默认值。
 
-**建议**：将改单阈值作为可配置参数 `ReorderThreshold`（如 `0.0002`），允许按交易所或品种调整，甚至按当前 ATR 自适应。
+**后续优化方向**：Gate.io 价格跳跃频繁（每次 0.1-0.5 USDT），0.02% 在高波动时段会触发非常频繁的撤单重挂。可考虑按交易所/品种调优默认值，或按当前 ATR 自适应。
 
 ### 13.3 【优先级：中】止盈区间触发逻辑缺失
 
@@ -1044,11 +1046,13 @@ GtcThreshold = ExcessProfitMultiplier × takerFeeRate
 
 **建议**：增加超时机制，当价格持续越过 takeProfitPrice 超过 N 分钟时，即使仓位不为零也触发止盈流程（先平仓再退出）。
 
-### 13.4 【已纳入规格】算法单哨兵的定时刷新频率
+### 13.4 【已实现】算法单哨兵的刷新频率
 
-算法单哨兵的频率要求已在 8.5 节明确规定：**建议间隔 1-2 分钟**，止损缓冲区较浅时取更小值。实施方应按此要求实现，而非沿用更长的默认定时周期。
+**现状**：清算线兜底条件单由 runner 在每个 tick（默认轮询 10 秒）且有持仓时检查并补齐（`ensureEmergencyStopLoss`），启动主网格时也会检查一次——实际频率高于此前建议的 1-2 分钟间隔。
 
-**背景说明**：算法单的主要维护依赖 WebSocket 实时事件，定时哨兵为兜底机制。若兜底间隔过长（如 10 分钟），在止损缓冲区较浅的配置下，价格可能在哨兵发现遗漏前已穿越多个止损格。1-2 分钟的间隔在事件可靠性和系统开销之间取得了合理平衡。
+**勘正（2026-08）**：本条此前引用的"8.5 节"并不存在（第八章仅 §8.1–§8.4），相关引用已从 §9.3 移除；§8.3"仅清算线一个兜底条件单"即当前设计。
+
+**背景说明**：兜底单的主要维护依赖 WebSocket 实时事件，每 tick 哨兵为兜底机制。在止损缓冲区较浅的配置下，高频检查可避免价格在哨兵发现遗漏前已穿越多个止损格。
 
 ### 13.5 【优先级：低】改单时的价格方向感知
 
@@ -1073,6 +1077,8 @@ GtcThreshold = ExcessProfitMultiplier × takerFeeRate
 **问题**：固定保护边界在极端行情（如闪崩后价格已跌去 5%）下可能仍会以较差价位成交。
 
 **建议**：GTC 吃单的保护上限应不超过 GridPrice——无论如何，买入价格不应高于网格底价。可将 GridPrice 作为硬性上界，叠加比例保护边界，取其中更低者作为实际下单价。
+
+> **2026-08 核查**：`GtcPrice = GridPrice × (1 ∓ GtcThreshold)` 恒小于（买入）/ 大于（卖出）GridPrice，且实际下单价 = `min(GtcPrice, 当前价 × 1.02)`（买入时），因此「买入不超过 GridPrice」的硬性上界已隐含满足；本条仅余固定 2% 比例边界的调优空间。
 
 ---
 

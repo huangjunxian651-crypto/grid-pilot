@@ -29,6 +29,7 @@ vi.mock("@/lib/hooks/useProfile", () => ({
 }));
 
 vi.mock("@/lib/hooks/useBots", () => ({
+  useRobots: () => ({ data: [] }),
   useArchivedRobots: () => ({
     isLoading: false,
     data: [

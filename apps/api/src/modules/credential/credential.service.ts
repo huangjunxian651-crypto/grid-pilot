@@ -17,7 +17,17 @@ export class CredentialService {
       apiSecret: this.crypto.encrypt(data.apiSecret as string),
       ...(data.passphrase ? { passphrase: this.crypto.encrypt(data.passphrase as string) } : {}),
     };
-    return this.prisma.exchangeAccount.create({ data: enc });
+    try {
+      return await this.prisma.exchangeAccount.create({ data: enc });
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+        throw new ConflictException({
+          code: "CREDENTIAL_DUPLICATE",
+          message: "A credential with this exchange/account/environment already exists",
+        });
+      }
+      throw err;
+    }
   }
 
   async findAll() {
@@ -25,6 +35,7 @@ export class CredentialService {
       select: {
         id: true,
         exchangeId: true,
+        environment: true,
         accountId: true,
         label: true,
         isActive: true,
@@ -39,6 +50,7 @@ export class CredentialService {
       select: {
         id: true,
         exchangeId: true,
+        environment: true,
         accountId: true,
         label: true,
         isActive: true,
@@ -63,6 +75,7 @@ export class CredentialService {
     return {
       id: credential.id,
       exchangeId: credential.exchangeId,
+      environment: credential.environment,
       accountId: credential.accountId,
       label: credential.label,
       isActive: credential.isActive,
@@ -90,6 +103,9 @@ export class CredentialService {
   async update(id: string, data: Record<string, any>) {
     await this.findOnePublic(id);
     const enc: Record<string, any> = { ...data };
+    // environment 创建后锁定不可变（见设计文档 §2.1）。ValidationPipe({whitelist:true}) 已在 DTO 层
+    // 剔除该字段，此处是独立于该管道配置的第二道防线——纵深防御，不依赖单一层不出错。
+    delete enc.environment;
     if ('apiKey' in data && data.apiKey) {
       enc.apiKey = this.crypto.encrypt(data.apiKey);
     }

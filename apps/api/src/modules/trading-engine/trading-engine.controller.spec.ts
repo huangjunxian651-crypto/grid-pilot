@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Test } from '@nestjs/testing';
+import { BadRequestException } from '@nestjs/common';
 import { TradingEngineController } from './trading-engine.controller';
 import { TradingEngineService } from './trading-engine.service';
 import { SessionService } from './session/session.service';
@@ -11,6 +12,7 @@ import type { BotStatus } from './trading-engine.service';
 import { BotManagerService } from './robot/bot-manager.service';
 import { CredentialService } from '../credential/credential.service';
 import { ExchangeAdapterFactory } from '../exchange/exchange-adapter.factory';
+import { StrategyMetricsService } from './strategy-metrics/strategy-metrics.service';
 
 const mockTradingEngineService = {
   getStatus: vi.fn(),
@@ -22,6 +24,7 @@ const mockTradingEngineService = {
   pauseBot: vi.fn(),
   resumeBot: vi.fn(),
   reconcileRobot: vi.fn(),
+  getMarketConstraints: vi.fn(),
 };
 
 const mockSessionService = {
@@ -37,6 +40,7 @@ const mockPrismaService = {
   fill: { findMany: vi.fn(), count: vi.fn(), findFirst: vi.fn(), aggregate: vi.fn() },
   order: { count: vi.fn() },
   equitySnapshot: { findMany: vi.fn(), findFirst: vi.fn() },
+  robot: { findUnique: vi.fn() },
 };
 
 const mockPersistenceService = {
@@ -66,6 +70,11 @@ const mockBotManagerService = {
 const mockCredentialService = { findOneWithSecrets: vi.fn() };
 const mockAdapterFactory = { createAdapter: vi.fn() };
 
+const mockStrategyMetricsService = {
+  getStrategyMetrics: vi.fn(),
+  getStrategySeries: vi.fn(),
+};
+
 describe('TradingEngineController', () => {
   let controller: TradingEngineController;
 
@@ -81,6 +90,7 @@ describe('TradingEngineController', () => {
         { provide: BotManagerService, useValue: mockBotManagerService },
         { provide: CredentialService, useValue: mockCredentialService },
         { provide: ExchangeAdapterFactory, useValue: mockAdapterFactory },
+        { provide: StrategyMetricsService, useValue: mockStrategyMetricsService },
       ],
     })
       .overrideGuard(AuthGuard)
@@ -571,6 +581,35 @@ describe('TradingEngineController', () => {
       await expect(controller.getRobot('nope')).rejects.toBeInstanceOf(NotFoundException);
     });
 
+    it('GET /robots/:id/market-constraints returns minQty/minNotional for the robot\'s exchange+symbol', async () => {
+      mockPrismaService.robot.findUnique.mockResolvedValue({ accountId: 'cred-1', symbol: 'ETH/USDT' });
+      mockTradingEngineService.getMarketConstraints.mockResolvedValue({ minQty: 0.001, minNotional: 20 });
+
+      const res = await controller.getMarketConstraints('robot-1');
+
+      expect(mockPrismaService.robot.findUnique).toHaveBeenCalledWith({
+        where: { id: 'robot-1' },
+        select: { accountId: true, symbol: true },
+      });
+      expect(mockTradingEngineService.getMarketConstraints).toHaveBeenCalledWith('cred-1', 'ETH/USDT');
+      expect(res).toEqual({ minQty: 0.001, minNotional: 20 });
+    });
+
+    it('GET /robots/:id/market-constraints 拉取失败时透传 null（前端据此跳过预检）', async () => {
+      mockPrismaService.robot.findUnique.mockResolvedValue({ accountId: 'cred-1', symbol: 'ETH/USDT' });
+      mockTradingEngineService.getMarketConstraints.mockResolvedValue(null);
+
+      const res = await controller.getMarketConstraints('robot-1');
+
+      expect(res).toBeNull();
+    });
+
+    it('GET /robots/:id/market-constraints throws 404 when robot not found', async () => {
+      const { NotFoundException } = await import('@nestjs/common');
+      mockPrismaService.robot.findUnique.mockResolvedValue(null);
+      await expect(controller.getMarketConstraints('nope')).rejects.toBeInstanceOf(NotFoundException);
+    });
+
     it('POST /robots/:id/start calls startRobot', async () => {
       mockBotManagerService.startRobot.mockResolvedValue(undefined);
       const res = await controller.startRobot('robot-1');
@@ -781,6 +820,7 @@ describe('权益/Alpha 历史曲线端点（P2-1）', () => {
         { provide: BotManagerService, useValue: mockBotManagerService },
         { provide: CredentialService, useValue: mockCredentialService },
         { provide: ExchangeAdapterFactory, useValue: mockAdapterFactory },
+        { provide: StrategyMetricsService, useValue: mockStrategyMetricsService },
       ],
     })
       .overrideGuard(AuthGuard)
@@ -842,6 +882,7 @@ describe('GET /trading-engine/robots/:id/fills', () => {
         { provide: BotManagerService, useValue: mockBotManagerService },
         { provide: CredentialService, useValue: mockCredentialService },
         { provide: ExchangeAdapterFactory, useValue: mockAdapterFactory },
+        { provide: StrategyMetricsService, useValue: mockStrategyMetricsService },
       ],
     })
       .overrideGuard(AuthGuard)
@@ -971,5 +1012,83 @@ describe('GET /trading-engine/robots/:id/fills', () => {
     const result = await controller.getRobotFills('robot-1');
 
     expect(result.data[0].eventData).toMatchObject({ orderId: 'EX1', clientOrderId: 'C1' });
+  });
+});
+
+describe('GET /trading-engine/metrics/strategy', () => {
+  let controller: TradingEngineController;
+
+  beforeEach(async () => {
+    const moduleRef = await Test.createTestingModule({
+      controllers: [TradingEngineController],
+      providers: [
+        { provide: TradingEngineService, useValue: mockTradingEngineService },
+        { provide: SessionService, useValue: mockSessionService },
+        { provide: PrismaService, useValue: mockPrismaService },
+        { provide: PersistenceService, useValue: mockPersistenceService },
+        { provide: SavingsService, useValue: mockSavingsService },
+        { provide: BotManagerService, useValue: mockBotManagerService },
+        { provide: CredentialService, useValue: mockCredentialService },
+        { provide: ExchangeAdapterFactory, useValue: mockAdapterFactory },
+        { provide: StrategyMetricsService, useValue: mockStrategyMetricsService },
+      ],
+    })
+      .overrideGuard(AuthGuard)
+      .useValue({ canActivate: () => true })
+      .compile();
+    controller = moduleRef.get<TradingEngineController>(TradingEngineController);
+    vi.clearAllMocks();
+  });
+
+  it('默认窗口 24h，透传 service 结果', async () => {
+    mockStrategyMetricsService.getStrategyMetrics.mockResolvedValue({ window: '24h', robots: [] });
+    const res = await controller.getStrategyMetrics(undefined);
+    expect(mockStrategyMetricsService.getStrategyMetrics).toHaveBeenCalledWith('24h');
+    expect(res).toEqual({ window: '24h', robots: [] });
+  });
+
+  it('非法窗口 → BadRequestException', async () => {
+    await expect(controller.getStrategyMetrics('1y')).rejects.toThrow(BadRequestException);
+  });
+});
+
+describe('GET /trading-engine/metrics/strategy/series', () => {
+  let controller: TradingEngineController;
+
+  beforeEach(async () => {
+    const moduleRef = await Test.createTestingModule({
+      controllers: [TradingEngineController],
+      providers: [
+        { provide: TradingEngineService, useValue: mockTradingEngineService },
+        { provide: SessionService, useValue: mockSessionService },
+        { provide: PrismaService, useValue: mockPrismaService },
+        { provide: PersistenceService, useValue: mockPersistenceService },
+        { provide: SavingsService, useValue: mockSavingsService },
+        { provide: BotManagerService, useValue: mockBotManagerService },
+        { provide: CredentialService, useValue: mockCredentialService },
+        { provide: ExchangeAdapterFactory, useValue: mockAdapterFactory },
+        { provide: StrategyMetricsService, useValue: mockStrategyMetricsService },
+      ],
+    })
+      .overrideGuard(AuthGuard)
+      .useValue({ canActivate: () => true })
+      .compile();
+    controller = moduleRef.get<TradingEngineController>(TradingEngineController);
+    vi.clearAllMocks();
+  });
+
+  it('缺 robotId → BadRequestException', async () => {
+    await expect(controller.getStrategySeries(undefined, '24h')).rejects.toThrow(BadRequestException);
+  });
+
+  it('正常透传 robotId 与 window', async () => {
+    mockStrategyMetricsService.getStrategySeries.mockResolvedValue({ robotId: 'r1', points: [] });
+    await controller.getStrategySeries('r1', '7d');
+    expect(mockStrategyMetricsService.getStrategySeries).toHaveBeenCalledWith('r1', '7d');
+  });
+
+  // 补覆盖用例（AGENTS.md 场景 B）：parseWindow 已校验非法窗口，此处固化契约
+  it('非法窗口 → BadRequestException', async () => {
+    await expect(controller.getStrategySeries('r1', '1y')).rejects.toThrow(BadRequestException);
   });
 });

@@ -79,6 +79,20 @@ export function useRobot(id: string) {
   });
 }
 
+/** 交易所最小下单量约束，供新增/编辑箱体表单的前端预检使用。这个值几乎不变（同一交易对
+ * 的交易所规则很少调整），staleTime 设长一点，不用每次打开弹窗都重新拉。拉取失败时
+ * fetchJson 会抛错，React Query 落到 error 态——调用方按 data == null 处理（跳过预检，
+ * 后端 addBox/editBox 的校验兜底），与其它降级路径一致。 */
+export function useMarketConstraints(robotId: string, enabled: boolean) {
+  return useQuery<{ minQty: number; minNotional: number; stepSize: number } | null>({
+    queryKey: ["robot", robotId, "market-constraints"],
+    queryFn: () => robotApi.marketConstraints(robotId),
+    enabled: enabled && !!robotId,
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+  });
+}
+
 export function useStartRobot() {
   const queryClient = useQueryClient();
   return useMutation<{ success: boolean; robotId: string }, Error, string>({

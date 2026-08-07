@@ -29,13 +29,13 @@ Compared with "buy and hold": buy-and-hold only profits if the price ultimately 
 ## 🤔 Before you grid-trade, ask yourself five questions
 
 **The price is still falling — why is the grid rushing to build a full position at the top?**
-A native grid opens the moment the price enters the range. GridPilot uses **trailing entry**: it follows the low down and enters only after a 0.2% (default) rebound confirms the footing — no bottom-guessing, no instant bag-holding.
+A native grid opens the moment the price enters the range. GridPilot uses **trailing entry**: it follows the low down and enters only after a 0.2% (default) rebound confirms the footing — no bottom-guessing, no instant bag-holding. (Trailing only happens when the price enters the activation window toward the loss side; if the price climbs back into the range from deeper levels toward the take-profit side, trailing is skipped and the bot starts running directly.)
 
 **The market moves every second — why do your orders never move once placed?**
-GridPilot re-decides on every market update: cancel when it should, amend when it should, and at any moment there may be no order on the book at all. When the price is unfavorable it refuses rather than chases; when it can fill as a Maker (0.02%) it never wastes a Taker fee (0.05%).
+GridPilot re-decides on every market update: cancel when it should, amend when it should, and at any moment there may be no order on the book at all. When the price is favorable it chases the order book for the best price; when unfavorable it would rather circuit-break and refuse the order; and when it can fill as a Maker (0.02%) it never wastes a Taker fee (0.05%). This chasing carries no downside: if price keeps falling past the grid price, it chases and buys even cheaper; if it bounces back without breaking the line above, it can still fill at the original price — under a standard gambler's-ruin model, the odds of a true miss are negligible — extra profit is free, and missing it costs nothing.
 
 **When the price jumps 5–10 USDT in one tick, what can your grid do but watch?**
-Static resting orders can only ever earn the dead price on the grid line. When the spread exceeds 2× the taker fee, GridPilot deliberately takes liquidity to lock in the extra spread beyond the grid step — and our tests show that the "rougher" an exchange's order book, the higher the excess return.
+Static resting orders can only ever earn the dead price on the grid line. When the price deviates from the grid's theoretical price by more than a threshold (default 0.1% ≈ 2× the taker fee, adjustable), GridPilot deliberately takes liquidity to lock in the extra spread beyond the grid step — and our tests show that the "rougher" an exchange's order book, the higher the excess return.
 
 **A brief dip below the range — why slash the entire position at market in one go?**
 One-click liquidation pays Taker fees *and* forfeits the rebound. GridPilot **trims in stages with limit orders** inside the stop-loss buffer; if the price rebounds, the residual position keeps earning. Only when the liquidation line is breached does the final backstop conditional order take over.
@@ -48,8 +48,8 @@ GridPilot pre-configures multiple non-overlapping ranges and activates whichever
 | Dimension | Exchange-Native Grid | GridPilot |
 |------|----------------|-----------|
 | **Decision-making** | Static batch orders that never move once placed | Automated chart-watching: re-evaluates on every market update before dynamically placing/amending/canceling orders, and may have no open orders at any given moment |
-| **Execution quality** | Static orders only ever earn the grid-line price; the excess spread in a jump passes by | Chases best bid/ask for optimal positioning; takes liquidity when the spread exceeds 2× the taker fee to lock in excess profit; refuses orders outright at unfavorable prices |
-| **Entry timing** | Opens a position immediately upon entering the range | Trailing entry: trails the low and builds the position only after a confirmed rebound (0.2% by default) |
+| **Execution quality** | Static orders only ever earn the grid-line price; the excess spread in a jump passes by | Anchors to the order book for the best price, never filling worse than the theoretical price; when the price deviates from the theoretical price beyond a threshold (default ≈2× the fee), deliberately takes liquidity to lock in excess profit; circuit-breaks and refuses orders at unfavorable prices |
+| **Entry timing** | Opens a position immediately upon entering the range | Trailing entry: when entering toward the loss side, trails the low and builds the position only after a confirmed rebound (0.2% by default) |
 | **Stop-loss** | One-shot market liquidation at a single price | Staged limit-order reduction in the buffer zone; the residual position benefits directly on a rebound; one backstop conditional order at the liquidation line |
 | **Market adaptation** | A fixed single range | Multiple non-overlapping ranges; whichever range the price enters becomes active while the rest stay dormant |
 
@@ -65,7 +65,7 @@ GridPilot pre-configures multiple non-overlapping ranges and activates whichever
 
 ## 💰 Understand the Fees, Save Money With an Invite Code at Sign-Up (sponsored by rebateto.me)
 
-Fees are charged by the exchange, and **GridPilot takes not a single cent**. On the same trade, a maker order (Maker) is ≈0.02% and a taker order (Taker) is ≈0.05%. Under leverage and high-frequency grids, fees get quietly amplified and add up to no small amount over time—GridPilot places Maker orders for you by default, saving about 0.03% per trade, and only actively takes when the opportunity is fleeting.
+Fees are charged by the exchange, and **GridPilot takes not a single cent**. On the same trade, a maker order (Maker) is ≈0.02% and a taker order (Taker) is ≈0.05%. Routine grid orders on both sides actually execute as Maker (resting orders), so there is no fee difference in day-to-day grid fills; GridPilot's fee edge shows up at three critical moments—on entry it waits for the rebound confirmation and places resting orders instead of instantly opening at market, on stop-loss it trims in stages with limit orders instead of slashing the whole position at market, and it only takes liquidity when the excess spread genuinely covers the fee.
 
 Going further: **when you register with an exchange, filling in a rebate code lets you get back roughly 20% of the fees you've already paid over the long term (40% for Gate), credited automatically**—effectively giving every trade an extra discount.
 
@@ -133,20 +133,22 @@ pnpm dev:skip-infra   # API + Web, skipping docker
 ## 🕹️ Usage Guide
 
 1. **Connect an exchange**: fill in your API Key/Secret in settings. **Grant only futures trading permission—never enable withdrawal permission.**
-2. **Configure the grid**: choose the trading pair and price range, and set the main grid count, step, quantity per grid, leverage, stop-loss buffer, and trailing-entry parameters.
+2. **Configure the grid**: choose the trading pair and direction (long/short), and set the take-profit price anchor, main grid count/step, quantity per grid, leverage, stop-loss buffer, and trailing-entry parameters (the box boundaries are derived automatically from the take-profit anchor plus the grid count and step).
 3. **Start the bot**: enter trailing entry → running, and the frontend displays market data, open orders, fills, and the state machine in real time.
-4. **Monitor and wind down**: triggering take-profit winds down by stopping further additions; triggering the stop-loss buffer reduces the position in stages.
+4. **Monitor and wind down**: when the price reaches the take-profit end, the grid closes out grid by grid and winds down naturally, taking profit and exiting once the position is flat; entering the stop-loss buffer trims the position dynamically grid by grid.
 
 Key parameters:
 
 | Parameter | Description |
 |------|------|
 | `takeProfitPrice` | Take-profit price (the take-profit boundary of the box) |
+| `direction` | Direction: LONG (long) / SHORT (short) |
 | `mainGridCount` / `mainGridStep` | Main grid count / step per grid (USDT) |
 | `mainGridPortionSize` | Order quantity per grid |
 | `leverage` | Leverage multiplier |
 | `stopLossGridCount` / `stopLossGridStep` | Stop-loss buffer zone count / step |
-| `activationPrice` / `trailingCallbackRate` | Trailing-entry activation price / callback rate |
+| `isolationStep` | Isolation band width (defaults to the stop-loss zone step) |
+| `activationPrice` / `trailingCallbackRate` | Range activation price (defaults to the midpoint of the main grid) / trailing-entry callback rate |
 | `excessProfitMultiplier` | GTC zone trigger multiplier (excess-profit threshold) |
 
 See [`docs/STRATEGY_SPEC.md`](docs/STRATEGY_SPEC.md) for the complete set of parameters.

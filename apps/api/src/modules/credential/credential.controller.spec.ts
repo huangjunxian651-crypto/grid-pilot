@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { Test } from "@nestjs/testing";
-import { INestApplication } from "@nestjs/common";
+import { INestApplication, ValidationPipe, ConflictException } from "@nestjs/common";
 import request from "supertest";
 import { CredentialController } from "./credential.controller";
 import { CredentialService } from "./credential.service";
@@ -30,6 +30,7 @@ describe("CredentialController (integration)", () => {
       .compile();
 
     app = module.createNestApplication();
+    app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
     await app.init();
   });
 
@@ -76,6 +77,7 @@ describe("CredentialController (integration)", () => {
   it("POST /credentials creates new credential", async () => {
     const createDto = {
       exchangeId: "binance",
+      environment: "live",
       accountId: "acc3",
       label: "New",
       apiKey: "key",
@@ -147,5 +149,52 @@ describe("CredentialController (integration)", () => {
 
     expect(res.body).toEqual({ id: "1" });
     expect(mockService.remove).toHaveBeenCalledWith("1");
+  });
+
+  it("POST /credentials requires environment (400 when missing)", async () => {
+    const res = await request(app.getHttpServer())
+      .post("/credentials")
+      .send({ exchangeId: "binance", accountId: "acc3", label: "New", apiKey: "key", apiSecret: "secret" })
+      .expect(400);
+    expect(res.body.message).toBeDefined();
+  });
+
+  it("POST /credentials rejects environment values outside demo/live (400)", async () => {
+    await request(app.getHttpServer())
+      .post("/credentials")
+      .send({ exchangeId: "binance", accountId: "acc3", label: "New", apiKey: "key", apiSecret: "secret", environment: "sandbox" })
+      .expect(400);
+  });
+
+  it("POST /credentials with environment=live passes it through to the service", async () => {
+    mockService.create.mockResolvedValue({ id: "3" });
+    await request(app.getHttpServer())
+      .post("/credentials")
+      .send({ exchangeId: "binance", accountId: "acc3", label: "New", apiKey: "key", apiSecret: "secret", environment: "live" })
+      .expect(201);
+    expect(mockService.create).toHaveBeenCalledWith(expect.objectContaining({ environment: "live" }));
+  });
+
+  it("PATCH /credentials/:id silently strips environment (creation-time lock, not user-editable)", async () => {
+    mockService.update.mockResolvedValue({ id: "1" });
+    await request(app.getHttpServer())
+      .patch("/credentials/1")
+      .send({ label: "Updated", environment: "live" })
+      .expect(200);
+    const [, calledWith] = mockService.update.mock.calls[0];
+    expect(calledWith).not.toHaveProperty("environment");
+  });
+
+  it("POST /credentials 撞唯一约束(exchangeId+accountId+environment)时返回 409（不是裸 500）", async () => {
+    mockService.create.mockRejectedValue(
+      new ConflictException({ code: "CREDENTIAL_DUPLICATE", message: "A credential with this exchange/account/environment already exists" }),
+    );
+
+    const res = await request(app.getHttpServer())
+      .post("/credentials")
+      .send({ exchangeId: "okx", accountId: "acc-dup", label: "Dup", apiKey: "key", apiSecret: "secret", environment: "live" })
+      .expect(409);
+
+    expect(res.body.code).toBe("CREDENTIAL_DUPLICATE");
   });
 });

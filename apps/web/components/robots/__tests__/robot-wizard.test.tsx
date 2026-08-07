@@ -24,8 +24,9 @@ vi.mock("@/lib/api", () => ({
 
 vi.mock("@/lib/hooks/useCredentials", () => ({
   useCredentials: () => ({ data: [
-    { id: "cred-1", exchangeId: "binance", label: "demo", accountId: "uid-1" },
-    { id: "cred-2", exchangeId: "okx", label: "main", accountId: "uid-2" },
+    { id: "cred-1", exchangeId: "binance", label: "demo", accountId: "uid-1", environment: "demo" },
+    { id: "cred-2", exchangeId: "okx", label: "main", accountId: "uid-2", environment: "demo" },
+    { id: "cred-3", exchangeId: "okx", label: "live-main", accountId: "uid-3", environment: "live" },
   ] }),
 }));
 
@@ -55,6 +56,10 @@ const SEED = {
     excessProfitMultiplier: 0, reorderThreshold: 0, enabled: true,
   }],
 };
+
+const SEED_LIVE = { ...SEED, id: "src-2", credentialId: "cred-3" };
+// credentialId 不在 useCredentials() 加载的列表中（例如凭证已被删除/尚未加载完成）→ 环境不可知
+const SEED_UNKNOWN_CRED = { ...SEED, id: "src-3", credentialId: "cred-unknown" };
 
 beforeEach(() => {
   mockPush.mockClear(); robotGet.mockReset(); robotCreate.mockReset(); robotAddBox.mockReset();
@@ -145,5 +150,71 @@ describe("RobotWizard", () => {
     // 默认值 ETH/USDT 是推荐 chip，应渲染；方向为默认 LONG
     expect(screen.getByTestId("symbol-chip-ETH/USDT")).toBeTruthy();
     expect((screen.getByTestId("wizard-dir-select") as HTMLSelectElement).value).toBe("LONG");
+  });
+
+  it("正式环境凭证：点击创建先弹二次确认，未确认不调用 create", async () => {
+    searchFrom = "src-2";
+    robotGet.mockResolvedValue(SEED_LIVE);
+    render(wrap(<RobotWizard />));
+    await waitFor(() => expect((screen.getByTestId("wizard-cred-select") as HTMLSelectElement).value).toBe("cred-3"));
+    fireEvent.click(screen.getByTestId("wizard-next"));
+    fireEvent.click(screen.getByTestId("wizard-next"));
+    fireEvent.click(screen.getByTestId("wizard-create"));
+    expect(screen.getByTestId("wizard-live-confirm-modal")).toBeTruthy();
+    expect(robotCreate).not.toHaveBeenCalled();
+  });
+
+  it("正式环境凭证：确认弹窗后才调用 create", async () => {
+    searchFrom = "src-2";
+    robotGet.mockResolvedValue(SEED_LIVE);
+    robotCreate.mockResolvedValue({ success: true, robotId: "live-1" });
+    robotAddBox.mockResolvedValue({ success: true, boxId: "nb-1" });
+    render(wrap(<RobotWizard />));
+    await waitFor(() => expect((screen.getByTestId("wizard-cred-select") as HTMLSelectElement).value).toBe("cred-3"));
+    fireEvent.click(screen.getByTestId("wizard-next"));
+    fireEvent.click(screen.getByTestId("wizard-next"));
+    fireEvent.click(screen.getByTestId("wizard-create"));
+    fireEvent.click(screen.getByTestId("wizard-live-confirm-ok"));
+    await waitFor(() => expect(robotCreate).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/robots/live-1"));
+  });
+
+  it("环境未知（credentialId 不在已加载凭证列表中）：失败关闭 — 点击创建先弹二次确认，不直接调用 create", async () => {
+    searchFrom = "src-3";
+    robotGet.mockResolvedValue(SEED_UNKNOWN_CRED);
+    render(wrap(<RobotWizard />));
+    // 种子加载完成的标志：预填的推荐 chip 出现（credentialId 与 symbol 同一 then 回调内一起 set）
+    await waitFor(() => expect(screen.getByTestId("symbol-chip-SOL/USDT")).toBeTruthy());
+    fireEvent.click(screen.getByTestId("wizard-next"));
+    fireEvent.click(screen.getByTestId("wizard-next"));
+    fireEvent.click(screen.getByTestId("wizard-create"));
+    expect(screen.getByTestId("wizard-live-confirm-modal")).toBeTruthy();
+    expect(robotCreate).not.toHaveBeenCalled();
+  });
+
+  it("正式环境凭证：点击弹窗取消按钮 → 不调用 create 且关闭弹窗", async () => {
+    searchFrom = "src-2";
+    robotGet.mockResolvedValue(SEED_LIVE);
+    render(wrap(<RobotWizard />));
+    await waitFor(() => expect((screen.getByTestId("wizard-cred-select") as HTMLSelectElement).value).toBe("cred-3"));
+    fireEvent.click(screen.getByTestId("wizard-next"));
+    fireEvent.click(screen.getByTestId("wizard-next"));
+    fireEvent.click(screen.getByTestId("wizard-create"));
+    expect(screen.getByTestId("wizard-live-confirm-modal")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("wizard-live-confirm-cancel"));
+    expect(robotCreate).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("wizard-live-confirm-modal")).toBeFalsy();
+  });
+
+  it("模拟环境凭证：点击创建直接调用 create，不弹确认", async () => {
+    searchFrom = "src-1";
+    robotGet.mockResolvedValue(SEED);
+    robotCreate.mockResolvedValue({ success: true, robotId: "new-1" });
+    robotAddBox.mockResolvedValue({ success: true, boxId: "nb-1" });
+    render(wrap(<RobotWizard />));
+    await advanceToReview();
+    fireEvent.click(screen.getByTestId("wizard-create"));
+    expect(screen.queryByTestId("wizard-live-confirm-modal")).toBeFalsy();
+    await waitFor(() => expect(robotCreate).toHaveBeenCalledTimes(1));
   });
 });

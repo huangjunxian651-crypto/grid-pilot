@@ -36,6 +36,8 @@ const createMockAdapter = (): ExchangeAdapter => ({
   getBalance: vi.fn().mockResolvedValue({ asset: 'USDT', free: 1000, locked: 0 }),
   setLeverage: vi.fn().mockResolvedValue(undefined),
   setMarginMode: vi.fn().mockResolvedValue(undefined),
+  getPositionMode: vi.fn().mockResolvedValue(true),
+  setPositionMode: vi.fn().mockResolvedValue(undefined),
   getMarketInfo: vi.fn().mockResolvedValue({
     symbol: 'ETH/USDT',
     rawSymbol: 'ETHUSDT',
@@ -192,6 +194,49 @@ describe('GridBotRunner', () => {
       expect(adapter.subscribeTicker).toHaveBeenCalledWith('ETH/USDT');
       expect(adapter.subscribeOrderUpdates).toHaveBeenCalled();
       expect(runner.getState()).toBeTruthy();
+    });
+
+    it('账户处于对冲模式时，启动切回单向模式——否则 OKX 每单必拒 "Parameter posSide error"', async () => {
+      // 2026-08-04 生产事故：OKX 账户为 long_short_mode，下单必须带 posSide，
+      // 而全代码库（三个适配器）都按单向模式设计、从不发 posSide，导致该机器人
+      // 连续拒单 592 次、网格停摆数小时。接口文档第 7 行早已写明启动序列
+      // setPositionMode → setLeverage → setMarginMode，但第一步从未被实现。
+      adapter.getPositionMode = vi.fn().mockResolvedValue(false); // 对冲模式
+
+      await startRunner(runner, adapter, deps, createInitialState());
+
+      expect(adapter.setPositionMode).toHaveBeenCalledWith(true);
+    });
+
+    it('账户已是单向模式时，不触碰账户设置（不做无谓的全局改动）', async () => {
+      adapter.getPositionMode = vi.fn().mockResolvedValue(true); // 已单向
+
+      await startRunner(runner, adapter, deps, createInitialState());
+
+      expect(adapter.setPositionMode).not.toHaveBeenCalled();
+    });
+
+    it('切换持仓模式失败（如有未平持仓）不中断启动——持仓保护优先于模式纠正', async () => {
+      // OKX 在有持仓/挂单时拒绝切换持仓模式。此时若让启动抛错中断，
+      // 已建仓位会失去后续的止损与网格管理，比模式不对更危险。
+      adapter.getPositionMode = vi.fn().mockResolvedValue(false);
+      adapter.setPositionMode = vi.fn().mockRejectedValue(new Error('Position exists, cannot switch'));
+
+      await expect(startRunner(runner, adapter, deps, createInitialState())).resolves.toBeUndefined();
+      expect(runner.isRunning()).toBe(true);
+      expect(adapter.setPositionMode).toHaveBeenCalledWith(true);
+      expect(loggerWarnSpy).toHaveBeenCalledWith(expect.stringContaining('setPositionMode'));
+    });
+
+    it('读取持仓模式失败（网络抖动等）不中断启动，且报错要指名 getPositionMode 而非误报成写入失败', async () => {
+      // 读失败与写失败混为一谈会误导下次事故的排查方向：前者是查不到模式（可能只是
+      // 瞬时 5xx/限流），后者是切换被交易所拒绝（通常是有持仓）。两者处置完全不同。
+      adapter.getPositionMode = vi.fn().mockRejectedValue(new Error('temporary 5xx'));
+
+      await expect(startRunner(runner, adapter, deps, createInitialState())).resolves.toBeUndefined();
+      expect(runner.isRunning()).toBe(true);
+      expect(adapter.setPositionMode).not.toHaveBeenCalled();
+      expect(loggerWarnSpy).toHaveBeenCalledWith(expect.stringContaining('getPositionMode'));
     });
 
     it('start() when already running warns and returns early', async () => {
@@ -437,6 +482,18 @@ describe('GridBotRunner', () => {
         startRunner(runner, adapter, deps, createInitialState()),
       ).resolves.toBeUndefined();
       expect(runner.isRunning()).toBe(true);
+    });
+
+    it('start() 同时把 minQty 注入策略配置（此前只透传 minNotional，OKX/Gate.io 的 minQty 校验形同虚设）', async () => {
+      await startRunner(runner, adapter, deps, createInitialState());
+
+      deps.fsm.transition.mockReturnValue({ newState: { kind: 'RUNNING', since: Date.now() } });
+      deps.strategy.computeDesiredOrders.mockReturnValue({ action: 'HOLD', reason: 'test' });
+
+      await vi.advanceTimersByTimeAsync(10000);
+
+      const lastCall = deps.strategy.computeDesiredOrders.mock.calls.at(-1)!;
+      expect(lastCall[2]).toMatchObject({ minQty: 0.001 });
     });
   });
 

@@ -57,6 +57,9 @@ export interface ExchangeAdapter {
   getBalance(): Promise<Balance>;
   setLeverage(symbol: string, leverage: number): Promise<void>;
   setMarginMode(symbol: string, crossMargin: boolean): Promise<void>;
+  /** true = 单向持仓(net)。全部下单路径都按单向模式设计，不发 posSide。 */
+  getPositionMode(): Promise<boolean>;
+  setPositionMode(oneWay: boolean): Promise<void>;
 
   // REST - Reconciliation
   getMyTrades(symbol: string, sinceMs: number): Promise<Array<FillEvent & { clientOrderId?: string; side?: 'BUY' | 'SELL' }>>;

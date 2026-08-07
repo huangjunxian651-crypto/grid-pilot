@@ -1,9 +1,10 @@
-# GridPilot 服务编排
-# 默认（无 profile）：仅启动 postgres + redis 基础设施（供本地开发）
-#   docker compose up -d
-# 全栈一键部署（含 api + web）：先确保根目录存在 .env，否则下方 env_file 会直接失败
+# GridPilot 完整产品栈（postgres + redis + api + web）。
+# 面向自部署客户：先确保根目录存在 .env，否则下方 env_file 会直接失败。
 #   cp .env.example .env   # 并把 ENCRYPTION_KEY 改为 `openssl rand -base64 32` 的真实输出
-#   docker compose --profile full up --build -d
+#   docker compose up --build -d
+# 更省事可以直接跑 ./install.sh，会自动处理 .env 并调用上面这条命令。
+#
+# 只想在本机跑基础设施、自己用 pnpm 起 api/web 做开发？见 docker-compose.dev.yml。
 services:
   postgres:
     image: postgres:16-alpine
@@ -35,7 +36,6 @@ services:
       retries: 10
 
   api:
-    profiles: ["full"]
     build:
       context: .
       dockerfile: apps/api/Dockerfile
@@ -55,13 +55,15 @@ services:
       - "${API_PORT:-3301}:3301"
 
   web:
-    profiles: ["full"]
     build:
       context: .
       dockerfile: apps/web/Dockerfile
       args:
         NEXT_PUBLIC_API_URL: http://localhost:${API_PORT:-3301}
         NEXT_PUBLIC_API_PORT: ${API_PORT:-3301}
+        # rewrites() 的目标在 next build 时烘焙进 routes-manifest.json，必须以 build arg 传入；
+        # 与下方 environment.API_URL 保持一致（Docker 内网地址，和公网域名/端口无关）
+        API_URL: http://api:3301
     env_file: .env
     environment:
       NODE_ENV: production

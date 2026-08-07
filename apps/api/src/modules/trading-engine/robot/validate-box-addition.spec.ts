@@ -86,6 +86,74 @@ describe('validateBoxAddition', () => {
   });
 });
 
+describe('validateBoxAddition — 最小下单量预校验（按箱体真实最低价折算 + stepSize 向上取整，不是实时价）', () => {
+  // 默认夹具真实范围 [2390, 2800]（见顶部注释），最低价 2390。
+  const mc = { minQty: 0.001, minNotional: 20, stepSize: 0.01 };
+
+  it('每格量按箱体最低价折算名义价值不足 minNotional 时拒绝', () => {
+    // 0.005 × 2390 = 11.95 < 20
+    const r = validateBoxAddition(box({ mainGridPortionSize: 0.005 }), [], 'LONG', mc);
+    expect(r.valid).toBe(false);
+    expect(r.errors.join()).toMatch(/order size/i);
+  });
+
+  it('每格量在箱体最低价上仍能满足 minNotional（且已是 stepSize 整数倍）时通过', () => {
+    // 20/2390=0.00837，按 stepSize=0.01 向上取整 → 0.01；0.01 本身即为下限
+    const r = validateBoxAddition(box({ mainGridPortionSize: 0.01 }), [], 'LONG', mc);
+    expect(r.valid).toBe(true);
+  });
+
+  it('每格量低于 minQty 时拒绝，即便名义价值达标', () => {
+    const r = validateBoxAddition(box({ mainGridPortionSize: 0.0005 }), [], 'LONG', { minQty: 0.001, minNotional: 0, stepSize: 0 });
+    expect(r.valid).toBe(false);
+  });
+
+  it('不传 marketConstraints（交易所规则拉取失败降级）时跳过该项校验', () => {
+    const r = validateBoxAddition(box({ mainGridPortionSize: 0.0000001 }), [], 'LONG');
+    expect(r.valid).toBe(true);
+  });
+
+  it('未提供 mainGridPortionSize 时跳过该项校验（旧调用点兼容）', () => {
+    const r = validateBoxAddition(box({}), [], 'LONG', mc);
+    expect(r.valid).toBe(true);
+  });
+
+  it('SHORT 箱按其真实最低价（takeProfitPrice 端）校验，而非实时价', () => {
+    // SHORT 真实范围 [2200, 2610]（见下方 shortBox 夹具注释），最低价即 takeProfitPrice=2200
+    // 20/2200=0.00909，向上取整到 0.01；0.008 < 0.01 → 拒绝
+    const b: BoxSpec = {
+      direction: 'SHORT', takeProfitPrice: 2200, mainGridCount: 200, mainGridStep: 2,
+      stopLossGridCount: 4, stopLossGridStep: 2, isolationStep: 2, mainGridPortionSize: 0.008,
+    };
+    const r = validateBoxAddition(b, [], 'SHORT', mc);
+    expect(r.valid).toBe(false);
+    expect(r.errors.join()).toMatch(/order size/i);
+  });
+
+  it('折算出的理论最小值必须按 stepSize 向上取整——防止交易所下单截断后又跌破门槛', () => {
+    // boxLowPrice=1800（2200 - 200×2 主网格深度 400）；20/1800=0.01111（理论最小）。
+    // 0.015 能通过"未取整"的旧校验（0.015×1800=27≥20），但交易所会把 0.015 向下截断到
+    // stepSize=0.01 的整数倍即 0.01，执行时名义价值只有 18＜20——原始生产 bug 会复现。
+    // 正确下限须向上取整到 0.02，0.015 必须被拒绝。
+    const b: BoxSpec = {
+      direction: 'LONG', takeProfitPrice: 2200, mainGridCount: 200, mainGridStep: 2,
+      stopLossGridCount: 0, stopLossGridStep: 0, isolationStep: 0, mainGridPortionSize: 0.015,
+    };
+    const r = validateBoxAddition(b, [], 'LONG', mc);
+    expect(r.valid).toBe(false);
+    expect(r.errors.join()).toMatch(/order size/i);
+  });
+
+  it('达到 stepSize 向上取整后的真实下限（0.02）时通过', () => {
+    const b: BoxSpec = {
+      direction: 'LONG', takeProfitPrice: 2200, mainGridCount: 200, mainGridStep: 2,
+      stopLossGridCount: 0, stopLossGridStep: 0, isolationStep: 0, mainGridPortionSize: 0.02,
+    };
+    const r = validateBoxAddition(b, [], 'LONG', mc);
+    expect(r.valid).toBe(true);
+  });
+});
+
 describe('validateBoxAddition SHORT', () => {
   // SHORT 真实范围 [boxLowPrice, boxHighPrice] = [takeProfitPrice, liquidationPrice]
   // takeProfitPrice=2200, mainGridCount=200, mainGridStep=2 → mainGridDepth=400 → fullPosition=2600

@@ -8,12 +8,12 @@ const read = (f: string) => readFileSync(resolve(ROOT, f), "utf8");
 
 /**
  * 保护 README 文档中的两种安装方式不被悄悄改坏：
- *   方式一：docker compose --profile full up --build -d
- *   方式二：pnpm install + pnpm dev（cp .env.example .env）
+ *   方式一：面向客户/自部署，纯 Docker，./install.sh 或 docker compose up --build -d
+ *   方式二：面向开发者，pnpm install + pnpm dev（infra 走 docker-compose.dev.yml）
  * 这是黑盒契约测试——只读编排/脚本/模板文件，断言文档承诺的安装步骤仍然成立。
  */
 
-describe("安装方式一 · Docker 全栈编排（docker-compose.yml）", () => {
+describe("安装方式一 · Docker 全栈编排（docker-compose.yml，默认即完整产品）", () => {
   const compose = read("docker-compose.yml");
 
   it("定义 postgres / redis / api / web 四个服务", () => {
@@ -22,10 +22,12 @@ describe("安装方式一 · Docker 全栈编排（docker-compose.yml）", () =>
     }
   });
 
-  it("api 与 web 归于 full profile（默认 up 仅起基础设施）", () => {
-    // 两处 profiles: ["full"]（api + web 各一）
-    const matches = compose.match(/profiles:\s*\[\s*["']full["']\s*\]/g) ?? [];
-    expect(matches.length).toBeGreaterThanOrEqual(2);
+  it("api 与 web 不依赖 profile（客户不需要理解 --profile 概念）", () => {
+    expect(compose).not.toMatch(/profiles:\s*\[\s*["']full["']\s*\]/);
+  });
+
+  it("提供一键安装脚本 install.sh", () => {
+    expect(existsSync(resolve(ROOT, "install.sh"))).toBe(true);
   });
 
   it("端口经环境变量驱动（与 .env 一致，可避免冲突）", () => {
@@ -53,8 +55,9 @@ describe("安装方式一 · Docker 全栈编排（docker-compose.yml）", () =>
 
   it("README 记载方式一命令", () => {
     const md = read("README.md");
-    expect(md).toContain("docker compose --profile full up");
-    expect(md).toContain("cp .env.example .env");
+    expect(md).toContain("./install.sh");
+    expect(md).toContain("docker compose up --build -d");
+    expect(md).not.toContain("--profile full");
   });
 
   it("api 入口容错容器注入的环境变量（不硬要求磁盘 .env，防 docker 启动崩溃回归）", () => {
@@ -66,7 +69,7 @@ describe("安装方式一 · Docker 全栈编排（docker-compose.yml）", () =>
   });
 });
 
-describe("安装方式二 · 本地 pnpm 开发", () => {
+describe("安装方式二 · 本地 pnpm 开发（面向开发者，仍需 Docker 起基础设施）", () => {
   const pkg = JSON.parse(read("package.json")) as { scripts?: Record<string, string> };
   const scripts = pkg.scripts ?? {};
 
@@ -76,10 +79,40 @@ describe("安装方式二 · 本地 pnpm 开发", () => {
     }
   });
 
+  it("dev:infra 指向仅含基础设施的 docker-compose.dev.yml（不误起 api/web）", () => {
+    expect(scripts["dev:infra"]).toContain("docker-compose.dev.yml");
+  });
+
+  it("docker-compose.dev.yml 只含 postgres/redis，不含 api/web", () => {
+    const devCompose = read("docker-compose.dev.yml");
+    expect(devCompose).toContain("postgres:");
+    expect(devCompose).toContain("redis:");
+    expect(devCompose).not.toMatch(/^\s*api:/m);
+    expect(devCompose).not.toMatch(/^\s*web:/m);
+  });
+
   it("README 记载方式二命令", () => {
     const md = read("README.md");
     expect(md).toContain("pnpm install");
     expect(md).toContain("pnpm dev");
+  });
+});
+
+describe("一键安装脚本 install.sh", () => {
+  const script = read("install.sh");
+
+  it("检测 Docker 缺失时打印官方安装文档链接并退出，不静默 sudo 安装", () => {
+    expect(script).toContain("docs.docker.com");
+    expect(script).not.toMatch(/curl.*get\.docker\.com.*\|\s*sh/);
+  });
+
+  it("自动生成 .env 并回填随机 ENCRYPTION_KEY", () => {
+    expect(script).toContain(".env.example");
+    expect(script).toMatch(/openssl rand -base64 32/);
+  });
+
+  it("最终调用 docker compose up --build -d（不依赖 --profile）", () => {
+    expect(script).toContain("docker compose up --build -d");
   });
 });
 

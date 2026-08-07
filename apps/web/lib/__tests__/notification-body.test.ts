@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveNotificationBody } from "@/lib/notification-body";
+import { resolveNotificationBody, resolveNotificationTitle } from "@/lib/notification-body";
 import { translate } from "@/lib/i18n";
 import type { Notification } from "@/lib/api";
 
@@ -39,5 +39,23 @@ describe("resolveNotificationBody", () => {
   it("未知 code 回退显示 body", () => {
     const n: Notification = { ...base, code: "FUTURE_CODE", params: {} };
     expect(resolveNotificationBody(n, t)).toBe("raw body");
+  });
+});
+
+describe("resolveNotificationTitle", () => {
+  it("有 code 且存在 notifications.title.<code> 词条时显示中文短标题，而非后端原始英文 title", () => {
+    const n: Notification = { ...base, title: "Orders rejected repeatedly, grid cannot operate", code: "RUNNER_STOPPED_REJECTIONS" };
+    const text = resolveNotificationTitle(n, t);
+    expect(text).not.toBe("Orders rejected repeatedly, grid cannot operate");
+    expect(text).toContain("网格");
+  });
+
+  it("无 code 的旧数据直接显示原始 title", () => {
+    expect(resolveNotificationTitle(base, t)).toBe("T");
+  });
+
+  it("未知 code（无对应标题词条）回退显示原始 title", () => {
+    const n: Notification = { ...base, title: "Some future event", code: "FUTURE_CODE" };
+    expect(resolveNotificationTitle(n, t)).toBe("Some future event");
   });
 });

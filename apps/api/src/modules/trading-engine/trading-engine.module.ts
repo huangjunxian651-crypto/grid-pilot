@@ -11,6 +11,7 @@ import { PersistenceService } from './persistence/persistence.service';
 import { FillIngestionService } from './fills/fill-ingestion.service';
 import { FillReconcileService } from './fills/fill-reconcile.service';
 import { TradingMetricsService } from './metrics/trading-metrics.service';
+import { StrategyMetricsService } from './strategy-metrics/strategy-metrics.service';
 import { AccountSnapshotService } from './account/account-snapshot.service';
 import { RunBalanceSnapshotService } from './account/run-balance-snapshot.service';
 import { FundingIngestionService } from './account/funding-ingestion.service';
@@ -34,6 +35,7 @@ import { CredentialService } from '../credential/credential.service';
     FillIngestionService,
     FillReconcileService,
     TradingMetricsService,
+    StrategyMetricsService,
     AccountSnapshotService,
     RunBalanceSnapshotService,
     FundingIngestionService,
@@ -57,6 +59,7 @@ import { CredentialService } from '../credential/credential.service';
                 apiKey: cred.apiKey,
                 apiSecret: cred.apiSecret,
                 passphrase: cred.passphrase ?? undefined,
+                environment: cred.environment as 'demo' | 'live',
               });
               const adapter = new ExchangeAdapterBridge(legacy);
               try {

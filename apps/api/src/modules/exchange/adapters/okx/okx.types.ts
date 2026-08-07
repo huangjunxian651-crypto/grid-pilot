@@ -31,6 +31,9 @@ export const OKX_WS_PRIVATE = "wss://wspap.okx.com:8443/ws/v5/private";
 export const OKX_WS_PUBLIC = "wss://wspap.okx.com:8443/ws/v5/public";
 /** @deprecated Use OKX_WS_PRIVATE instead */
 export const OKX_WS_DEMO = OKX_WS_PRIVATE;
+// Live (real funds) endpoints — REST 与 demo 同域名，靠 x-simulated-trading 头区分
+export const OKX_WS_PUBLIC_LIVE = "wss://ws.okx.com:8443/ws/v5/public";
+export const OKX_WS_PRIVATE_LIVE = "wss://ws.okx.com:8443/ws/v5/private";
 
 // Simulated trading header required for all demo API requests
 export const OKX_SIMULATED_TRADING_HEADER = "1";

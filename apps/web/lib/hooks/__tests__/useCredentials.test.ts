@@ -68,6 +68,7 @@ describe("useCredentials hooks", () => {
       label: "New Account",
       apiKey: "key123",
       apiSecret: "secret456",
+      environment: "demo" as const,
     };
 
     const response = await result.current.mutateAsync(input);

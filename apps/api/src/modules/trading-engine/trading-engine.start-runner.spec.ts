@@ -56,7 +56,7 @@ describe('TradingEngineService.startRunner — 轮询接线', () => {
   }
 
   const config = { runCode: 'ETHUSDT_x', symbol: 'ETH/USDT' } as any;
-  const adapter = { id: 'adapter-x' } as any;
+  const adapter = { id: 'adapter-x', exchange: 'okx' } as any;
 
   beforeEach(() => vi.clearAllMocks());
 
@@ -133,7 +133,7 @@ describe('TradingEngineService.startRunner — 轮询接线', () => {
     expect(notificationMock.createAndBroadcast).toHaveBeenCalledWith(expect.objectContaining({
       type: 'warn',
       code: 'RUNNER_ORDER_REJECTED',
-      params: { symbol: 'ETH/USDT', runCode: 'ETHUSDT_x', reason: 'ACCOUNT_MODE_RESTRICTED' },
+      params: { symbol: 'OKX ETH/USDT', runCode: 'ETHUSDT_x', reason: 'ACCOUNT_MODE_RESTRICTED' },
     }));
   });
 
@@ -166,7 +166,7 @@ describe('TradingEngineService.startRunner — 轮询接线', () => {
     expect(notificationMock.createAndBroadcast).toHaveBeenCalledWith(expect.objectContaining({
       type: 'alert',
       code: 'RUNNER_PAUSED_PERMANENT_ERROR',
-      params: { symbol: 'ETH/USDT', runCode: 'ETHUSDT_x', reason: 'CLIENT_ID_TOO_LONG' },
+      params: { symbol: 'OKX ETH/USDT', runCode: 'ETHUSDT_x', reason: 'CLIENT_ID_TOO_LONG' },
     }));
   });
 
@@ -253,7 +253,7 @@ describe('TradingEngineService.startRunner — 轮询接线', () => {
     expect(notificationMock.createAndBroadcast).toHaveBeenCalledWith(expect.objectContaining({
       type: 'alert',
       code: 'RUNNER_RESIDUAL_POSITION',
-      params: { symbol: 'ETH/USDT', runCode: 'ETHUSDT_x', reason: 'LIQUIDATION_RESIDUAL' },
+      params: { symbol: 'OKX ETH/USDT', runCode: 'ETHUSDT_x', reason: 'LIQUIDATION_RESIDUAL' },
     }));
   });
 

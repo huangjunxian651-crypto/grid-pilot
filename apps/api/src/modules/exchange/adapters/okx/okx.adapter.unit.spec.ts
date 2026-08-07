@@ -1,11 +1,49 @@
 // okx.adapter.unit.spec.ts — OKX adapter unit tests with nock
 // Intercepts all HTTP requests to OKX Demo API, no live network calls
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import nock from "nock";
-import { OkxAdapter } from "./okx.adapter";
 import { ExchangeError, ErrorCategory } from "../../interfaces/exchange-adapter.interface";
-import { OKX_REST_DEMO } from "./okx.types";
+import { OKX_REST_DEMO, OKX_WS_PUBLIC, OKX_WS_PRIVATE, OKX_WS_PUBLIC_LIVE, OKX_WS_PRIVATE_LIVE } from "./okx.types";
+
+// 在模块边界 mock WS client：可控假客户端，记录构造函数收到的 url/isPrivate 参数，
+// 用于验证 OkxAdapter.getPublicWs()/getPrivateWs() 是否按 environment 解析出正确的 WS
+// 端点常量，以及是否把正确的 isPrivate 传给 OkxWsClient（与 gateio.adapter.spec.ts 的
+// FakeGateioWsClient 同一模式）。此文件其余测试全部走 REST（nock），不会构造
+// OkxWsClient，故此 mock 不影响既有用例。
+const h = vi.hoisted(() => {
+  const wsInstances: Array<{
+    url: string;
+    isPrivate: boolean;
+    handlers: Record<string, Array<(a: unknown) => void>>;
+    emit: (ev: string, a: unknown) => void;
+  }> = [];
+  class FakeOkxWsClient {
+    url: string;
+    isPrivate: boolean;
+    handlers: Record<string, Array<(a: unknown) => void>> = {};
+    constructor(_credentials: unknown, url: string, isPrivate: boolean) {
+      this.url = url;
+      this.isPrivate = isPrivate;
+      wsInstances.push(this);
+    }
+    async connect() {}
+    on(ev: string, fn: (a: unknown) => void) {
+      (this.handlers[ev] ??= []).push(fn);
+    }
+    off() {}
+    disconnect() {}
+    subscribe() {}
+    unsubscribe() {}
+    emit(ev: string, arg: unknown) {
+      (this.handlers[ev] ?? []).forEach((fn) => fn(arg));
+    }
+  }
+  return { wsInstances, FakeOkxWsClient };
+});
+vi.mock("./okx-ws-client", () => ({ OkxWsClient: h.FakeOkxWsClient }));
+
+import { OkxAdapter } from "./okx.adapter";
 
 const BASE_URL = new URL(OKX_REST_DEMO).origin;
 
@@ -163,6 +201,30 @@ describe("OkxAdapter", () => {
     ).rejects.toThrow(ExchangeError);
   });
 
+  it("createOrder 顶层 code:1 msg:'All operations failed' 时必须透传 data[0].sCode/sMsg 真实原因，而非丢给调用方一个裸的 '1'", async () => {
+    // 生产实况（2026-08-04）：ETHUSDT 网格连续 100+ 次下单被拒，日志和通知里只有
+    // "OKX createOrder failed: All operations failed"/裸错误码 "1"，真实原因（保证金不足等）
+    // 被顶层聚合状态盖住。cancelOrder/createAlgoOrder 已用 extractOkxBatchError 处理同一 OKX 接口
+    // 特性，createOrder 必须补齐同一处理，否则 actionable-rejections 白名单里的 51008/51010 永远匹配不上。
+    nock(BASE_URL)
+      .get("/api/v5/account/config")
+      .reply(200, { code: "0", data: [{ acctLv: "2" }] });
+    nock(BASE_URL)
+      .post("/api/v5/trade/order")
+      .reply(200, {
+        code: "1",
+        msg: "All operations failed",
+        data: [{ sCode: "51008", sMsg: "Order failed. Insufficient margin" }],
+      });
+
+    await expect(
+      adapter.createOrder({ symbol: "ETH/USDT", side: "buy", type: "limit", qty: 0.1, price: 2400 }),
+    ).rejects.toMatchObject({
+      code: "51008",
+      message: expect.stringContaining("Insufficient margin"),
+    });
+  });
+
   // ── cancelOrder ───────────────────────────────────────────────
 
   it("cancelOrder resolves on success", async () => {
@@ -241,6 +303,32 @@ describe("OkxAdapter", () => {
       .reply(200, { code: "0", msg: "" });
 
     await expect(adapter.cancelAllOrders("ETH/USDT")).resolves.toBeUndefined();
+  });
+
+  it("cancelAllOrders 顶层 code:1 msg:'All operations failed' 时必须透传 data[0].sCode/sMsg 真实原因（cancelBatchOrders 同一 OKX 接口特性）", async () => {
+    nock(BASE_URL)
+      .get("/api/v5/trade/orders-pending")
+      .query(true)
+      .reply(200, {
+        code: "0",
+        msg: "",
+        data: [
+          { instId: "ETH-USDT-SWAP", ordId: "1", side: "buy", ordType: "limit", sz: "1", px: "2400", state: "live", fillSz: "0", uTime: "1000" },
+        ],
+      });
+
+    nock(BASE_URL)
+      .post("/api/v5/trade/cancel-batch-orders")
+      .reply(200, {
+        code: "1",
+        msg: "All operations failed",
+        data: [{ ordId: "1", sCode: "51503", sMsg: "Cancellation failed as the order is not found." }],
+      });
+
+    await expect(adapter.cancelAllOrders("ETH/USDT")).rejects.toMatchObject({
+      code: "51503",
+      message: expect.stringContaining("Cancellation failed as the order is not found"),
+    });
   });
 
   // ── fetchPosition ─────────────────────────────────────────────
@@ -800,6 +888,29 @@ describe("OkxAdapter", () => {
     expect(order.type).toBe("market");
   });
 
+  it("closePosition 顶层 code:1 msg:'All operations failed' 时必须透传 data[0].sCode/sMsg 真实原因", async () => {
+    nock(BASE_URL)
+      .get("/api/v5/account/positions")
+      .query(true)
+      .reply(200, {
+        code: "0",
+        msg: "",
+        data: [{ instId: "ETH-USDT-SWAP", posSide: "long", pos: "1", avgPx: "2400", upl: "0", lever: "10", mgnMode: "cross", availPos: "1" }],
+      });
+    nock(BASE_URL)
+      .post("/api/v5/trade/order")
+      .reply(200, {
+        code: "1",
+        msg: "All operations failed",
+        data: [{ sCode: "51008", sMsg: "Order failed. Insufficient margin" }],
+      });
+
+    await expect(adapter.closePosition("ETH/USDT", "long")).rejects.toMatchObject({
+      code: "51008",
+      message: expect.stringContaining("Insufficient margin"),
+    });
+  });
+
   it("closePosition 分数合约持仓向上取整张数——reduceOnly 兜底,不留残仓(实测 38.41 张 round→38 残留 0.41 张)", async () => {
     nock(BASE_URL)
       .get("/api/v5/account/positions")
@@ -1039,5 +1150,117 @@ describe("OkxAdapter", () => {
 
     const records = await adapter.fetchFundingHistory("ETH/USDT", 0);
     expect(records).toHaveLength(2);
+  });
+});
+
+describe("OkxAdapter environment routing", () => {
+  afterEach(() => { nock.cleanAll(); });
+
+  it("demo (default) sends x-simulated-trading header", async () => {
+    const adapter = new OkxAdapter({ apiKey: "k", apiSecret: "s", passphrase: "p", accountId: "a" });
+    const scope = nock(BASE_URL, { reqheaders: { "x-simulated-trading": "1" } })
+      .get("/api/v5/market/ticker")
+      .query({ instId: "ETH-USDT-SWAP" })
+      .reply(200, { code: "0", msg: "", data: [{ instId: "ETH-USDT-SWAP", last: "2456.7", bidPx: "2456.5", askPx: "2456.9", ts: "1597026383085" }] });
+    await adapter.getTicker("ETH/USDT");
+    expect(scope.isDone()).toBe(true);
+  });
+
+  it("live omits x-simulated-trading header", async () => {
+    const adapter = new OkxAdapter({ apiKey: "k", apiSecret: "s", passphrase: "p", accountId: "a", environment: "live" });
+    const scope = nock(BASE_URL, { badheaders: ["x-simulated-trading"] })
+      .get("/api/v5/market/ticker")
+      .query({ instId: "ETH-USDT-SWAP" })
+      .reply(200, { code: "0", msg: "", data: [{ instId: "ETH-USDT-SWAP", last: "2456.7", bidPx: "2456.5", askPx: "2456.9", ts: "1597026383085" }] });
+    await adapter.getTicker("ETH/USDT");
+    expect(scope.isDone()).toBe(true);
+  });
+});
+
+// ── OkxAdapter → OkxWsClient WS URL/isPrivate 路由 ─────────────────────
+// 姊妹任务(Binance/Gate.io)的教训:初版实现只做了 WS 端环境路由，却没有断言
+// WS URL 选型本身或 isPrivate/environment 的透传，review 时两次都被标 Important，
+// 需要补一轮才修完。这里从一开始就把覆盖建进来。
+describe("OkxAdapter → OkxWsClient WS URL/isPrivate 路由", () => {
+  beforeEach(() => {
+    h.wsInstances.length = 0;
+  });
+
+  it("demo（缺省）watchTicker 创建的 OkxWsClient 走 OKX_WS_PUBLIC，isPrivate=false", async () => {
+    const adapter = new OkxAdapter({ apiKey: "k", apiSecret: "s", passphrase: "p", accountId: "a" });
+
+    const collect = (async () => {
+      for await (const _t of adapter.watchTicker("ETH/USDT")) {
+        break;
+      }
+    })();
+
+    await new Promise((r) => setTimeout(r, 0));
+    const ws = h.wsInstances[h.wsInstances.length - 1];
+    expect(ws.url).toBe(OKX_WS_PUBLIC);
+    expect(ws.isPrivate).toBe(false);
+
+    ws.emit("data", { channel: "tickers", data: [{ last: "2000", bidPx: "1999", askPx: "2001", ts: "1" }] });
+    await collect;
+    adapter.destroy();
+  });
+
+  it('environment: "live" → watchTicker 创建的 OkxWsClient 走 OKX_WS_PUBLIC_LIVE（不是 demo 端点），isPrivate=false', async () => {
+    const adapter = new OkxAdapter({ apiKey: "k", apiSecret: "s", passphrase: "p", accountId: "a", environment: "live" });
+
+    const collect = (async () => {
+      for await (const _t of adapter.watchTicker("ETH/USDT")) {
+        break;
+      }
+    })();
+
+    await new Promise((r) => setTimeout(r, 0));
+    const ws = h.wsInstances[h.wsInstances.length - 1];
+    expect(ws.url).toBe(OKX_WS_PUBLIC_LIVE);
+    expect(ws.url).not.toBe(OKX_WS_PUBLIC);
+    expect(ws.isPrivate).toBe(false);
+
+    ws.emit("data", { channel: "tickers", data: [{ last: "2000", bidPx: "1999", askPx: "2001", ts: "1" }] });
+    await collect;
+    adapter.destroy();
+  });
+
+  it("demo（缺省）watchOrderFills 创建的 OkxWsClient 走 OKX_WS_PRIVATE，isPrivate=true（需要登录）", async () => {
+    const adapter = new OkxAdapter({ apiKey: "k", apiSecret: "s", passphrase: "p", accountId: "a" });
+
+    const collect = (async () => {
+      for await (const _f of adapter.watchOrderFills("ETH/USDT")) {
+        break;
+      }
+    })();
+
+    await new Promise((r) => setTimeout(r, 0));
+    const ws = h.wsInstances[h.wsInstances.length - 1];
+    expect(ws.url).toBe(OKX_WS_PRIVATE);
+    expect(ws.isPrivate).toBe(true);
+
+    ws.emit("data", { channel: "orders", data: [{ ordId: "1", instId: "ETH-USDT-SWAP", side: "buy", fillSz: "1", fillPx: "2000", state: "filled", fillTime: "1" }] });
+    await collect;
+    adapter.destroy();
+  });
+
+  it('environment: "live" → watchOrderFills 创建的 OkxWsClient 走 OKX_WS_PRIVATE_LIVE，isPrivate=true（这是本 Task 要修的登录识别 bug 的直接回归覆盖）', async () => {
+    const adapter = new OkxAdapter({ apiKey: "k", apiSecret: "s", passphrase: "p", accountId: "a", environment: "live" });
+
+    const collect = (async () => {
+      for await (const _f of adapter.watchOrderFills("ETH/USDT")) {
+        break;
+      }
+    })();
+
+    await new Promise((r) => setTimeout(r, 0));
+    const ws = h.wsInstances[h.wsInstances.length - 1];
+    expect(ws.url).toBe(OKX_WS_PRIVATE_LIVE);
+    expect(ws.url).not.toBe(OKX_WS_PRIVATE);
+    expect(ws.isPrivate).toBe(true);
+
+    ws.emit("data", { channel: "orders", data: [{ ordId: "1", instId: "ETH-USDT-SWAP", side: "buy", fillSz: "1", fillPx: "2000", state: "filled", fillTime: "1" }] });
+    await collect;
+    adapter.destroy();
   });
 });

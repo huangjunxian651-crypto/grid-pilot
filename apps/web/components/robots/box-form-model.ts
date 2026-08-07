@@ -1,5 +1,6 @@
 import { deriveLayout, type BoxLayout } from "@/lib/store";
 import { boxGeometryError, type BoxGeometryError } from "@/lib/box-geometry-error";
+import { minOrderSizeRequirement, type OrderSizeConstraints } from "@gridpilot/shared-types";
 import type { AddBoxInput, RobotBox } from "@/lib/api";
 
 /** 箱体参数表单值（全部字符串，对应受控输入框）。 */
@@ -76,11 +77,16 @@ export function boxFormPreviewLayout(v: BoxFormValue, direction: string): BoxLay
   });
 }
 
-/** 几何 + 激活价校验，均返回 i18n 错误键（供组件 t() 翻译）。 */
+/** 交易所最小下单量约束，供箱体保存前预校验用；拉取失败时上游传 undefined/null 跳过该项。
+ * 复用 shared-types 的 OrderSizeConstraints，不再重复声明同形状接口。 */
+export type MarketConstraints = OrderSizeConstraints;
+
+/** 几何 + 激活价 + 最小下单量校验，均返回 i18n 错误键（供组件 t() 翻译）。 */
 export function boxFormErrors(
   v: BoxFormValue,
   direction: string,
-): { geometry: BoxGeometryError | null; activation: BoxGeometryError | null } {
+  marketConstraints?: MarketConstraints | null,
+): { geometry: BoxGeometryError | null; activation: BoxGeometryError | null; orderSize: BoxGeometryError | null } {
   const geometry = boxGeometryError({
     direction,
     takeProfitPrice: Number(v.takeProfitPrice),
@@ -100,7 +106,25 @@ export function boxFormErrors(
       activation = { key: "robot.activation_range_error", params: { lo: lo.toFixed(2), hi: hi.toFixed(2) } };
     }
   }
-  return { geometry, activation };
+
+  // 最小下单量：按箱体真实最低价（layout.boxLowPrice）折算名义价值，不用实时价——网格要在
+  // 整个箱体价格区间内持续成交，只要在最低价上仍满足交易所门槛，后续价格无论怎么走都不会
+  // 触发运行时的 below_min_order 静默合单（见 apps/api grid-bot-runner.ts）；再按 stepSize
+  // 向上取整——交易所下单会把数量向下截断到 stepSize 整数倍，不取整则用户填入的值即便过了
+  // 未取整的理论最小值，截断后名义价值仍可能跌破门槛。见 minOrderSizeRequirement。
+  let orderSize: BoxGeometryError | null = null;
+  const portionSize = Number(v.mainGridPortionSize);
+  if (marketConstraints && layout && portionSize > 0) {
+    const minRequired = minOrderSizeRequirement(layout.boxLowPrice, marketConstraints);
+    if (portionSize < minRequired) {
+      orderSize = {
+        key: "robot.order_size_below_minimum",
+        params: { suggested: minRequired.toFixed(6), boxLowPrice: layout.boxLowPrice.toFixed(2) },
+      };
+    }
+  }
+
+  return { geometry, activation, orderSize };
 }
 
 /** 由 AI 推荐的箱体参数生成表单值（用于向导 seedBox 预填）。 */

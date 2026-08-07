@@ -1,7 +1,18 @@
-import { describe, it, expect, vi } from "vitest";
-import { render, screen, act } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen, act, fireEvent, waitFor } from "@testing-library/react";
 import React, { Suspense } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+
+const { confirmMock, pauseMutateMock, stopMutateMock, removeMutateMock } = vi.hoisted(() => ({
+  confirmMock: vi.fn(),
+  pauseMutateMock: vi.fn(),
+  stopMutateMock: vi.fn(),
+  removeMutateMock: vi.fn(),
+}));
+
+vi.mock("@/lib/hooks/useConfirm", () => ({
+  useConfirm: () => confirmMock,
+}));
 
 // ---- mock next/navigation ----
 vi.mock("next/navigation", () => ({
@@ -64,6 +75,7 @@ const baseRobot = {
   managed: true,
   latestPrice: 1700,
   exchangeId: "binance",
+  environment: "live" as "demo" | "live",
   accountLabel: "demo",
   credentialId: "cred1",
   boxCount: 1,
@@ -99,12 +111,13 @@ const mockState: { robot: typeof baseRobot; events: typeof emptyEvents } = {
 vi.mock("@/lib/hooks/useBots", async (orig) => ({
   ...(await orig<typeof import("@/lib/hooks/useBots")>()),
   useRobot: () => ({ data: mockState.robot, isLoading: false }),
-  usePauseRobot: () => ({ mutate: vi.fn() }),
+  usePauseRobot: () => ({ mutate: pauseMutateMock }),
   useStartRobot: () => ({ mutate: vi.fn() }),
-  useStopRobot: () => ({ mutate: vi.fn() }),
+  useStopRobot: () => ({ mutate: stopMutateMock }),
   useAddBox: () => ({ mutate: vi.fn() }),
-  useRemoveBox: () => ({ mutate: vi.fn() }),
+  useRemoveBox: () => ({ mutate: removeMutateMock }),
   useEditBox: () => ({ mutate: vi.fn() }),
+  useMarketConstraints: () => ({ data: null }),
   useRobotFills: () => ({ data: { data: [], boxes: {}, summary: { todayRealizedPnl: 0, alphaTotal: 0 }, total: 0, limit: 100 } }),
   useRunningBots: () => ({ data: [] }),
 }));
@@ -138,6 +151,39 @@ async function renderPage() {
 }
 
 describe("RobotDetailPage", () => {
+  beforeEach(() => {
+    confirmMock.mockReset();
+    confirmMock.mockResolvedValue(true);
+    pauseMutateMock.mockClear();
+    stopMutateMock.mockClear();
+    removeMutateMock.mockClear();
+  });
+
+  it("活跃箱的总盈亏与未实现都带保证金回报率百分比", async () => {
+    // 0.3 × 1870 ÷ 20 = 28.05 保证金
+    mockState.robot = { ...baseRobot, activeBoxId: "b1", activeSessionCode: "ETHUSDT_1" };
+    mockState.events = {
+      ...emptyEvents,
+      liveStatus: { positionQty: 0.3, price: 1870, leverage: 20, unrealizedPnl: 2.805 } as never,
+    };
+    await renderPage();
+    expect(screen.getByTestId("box-total-roi").textContent).not.toBe("—");
+    expect(screen.getByTestId("box-unrealized-roi").textContent).toBe("+10.0%");
+  });
+
+  it("非活跃箱不显示保证金回报率（展示的是历史 netPnl，无当前持仓）", async () => {
+    // 守住设计规格 §3.2 的边界：把实时保证金分母套到历史量上是错误口径。
+    mockState.robot = { ...baseRobot, activeBoxId: null, activeSessionCode: null };
+    mockState.events = {
+      ...emptyEvents,
+      liveStatus: { positionQty: 0.3, price: 1870, leverage: 20, unrealizedPnl: 2.805 } as never,
+    };
+    await renderPage();
+    expect(screen.queryByTestId("box-total-roi")).toBeNull();
+    // 非活跃箱本就不渲染未实现那一行
+    expect(screen.queryByTestId("box-unrealized-roi")).toBeNull();
+  });
+
   it("无活跃箱时显示监控空态文案,不渲染网格面板", async () => {
     mockState.robot = { ...baseRobot, activeBoxId: null, activeSessionCode: null };
     mockState.events = { ...emptyEvents };
@@ -234,5 +280,176 @@ describe("RobotDetailPage", () => {
     expect(screen.getByTestId("term-help-savings")).toBeTruthy();
     expect(screen.getAllByTestId("term-help-realizedPnl").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByTestId("term-help-unrealizedPnl").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("正式环境机器人详情页头部显示常驻徽章", async () => {
+    mockState.robot = { ...baseRobot, environment: "live", activeBoxId: null, activeSessionCode: null };
+    mockState.events = { ...emptyEvents };
+    await renderPage();
+    expect(await screen.findByTestId("robot-live-badge")).toBeTruthy();
+  });
+
+  it("模拟环境机器人详情页头部不显示徽章", async () => {
+    mockState.robot = { ...baseRobot, environment: "demo", activeBoxId: null, activeSessionCode: null };
+    mockState.events = { ...emptyEvents };
+    await renderPage();
+    expect(screen.queryByTestId("robot-live-badge")).toBeNull();
+  });
+
+  it("停止机器人：取消确认时不触发 stopRobot.mutate", async () => {
+    mockState.robot = { ...baseRobot, status: "RUNNING", activeBoxId: null, activeSessionCode: null };
+    mockState.events = { ...emptyEvents };
+    confirmMock.mockResolvedValue(false);
+    await renderPage();
+    const stopBtn = screen.getByText("robot.action_stop");
+    await act(async () => { fireEvent.click(stopBtn); });
+    await waitFor(() => expect(confirmMock).toHaveBeenCalledTimes(1));
+    expect(stopMutateMock).not.toHaveBeenCalled();
+  });
+
+  it("停止机器人：确认后以 closePosition: true（默认勾选）触发 stopRobot.mutate", async () => {
+    mockState.robot = { ...baseRobot, status: "RUNNING", activeBoxId: null, activeSessionCode: null };
+    mockState.events = { ...emptyEvents };
+    confirmMock.mockResolvedValue(true);
+    await renderPage();
+    const stopBtn = screen.getByText("robot.action_stop");
+    await act(async () => { fireEvent.click(stopBtn); });
+    await waitFor(() => {
+      expect(stopMutateMock).toHaveBeenCalledWith(
+        { id: "r1", closePosition: true },
+        expect.objectContaining({ onSuccess: expect.any(Function) }),
+      );
+    });
+  });
+
+  it("暂停机器人：取消确认时不触发 pauseRobot.mutate", async () => {
+    mockState.robot = { ...baseRobot, status: "RUNNING", activeBoxId: null, activeSessionCode: null };
+    mockState.events = { ...emptyEvents };
+    confirmMock.mockResolvedValue(false);
+    await renderPage();
+    const pauseBtn = screen.getByText("robot.action_pause");
+    await act(async () => { fireEvent.click(pauseBtn); });
+    await waitFor(() => expect(confirmMock).toHaveBeenCalledTimes(1));
+    expect(pauseMutateMock).not.toHaveBeenCalled();
+  });
+
+  it("暂停机器人：确认后触发 pauseRobot.mutate", async () => {
+    mockState.robot = { ...baseRobot, status: "RUNNING", activeBoxId: null, activeSessionCode: null };
+    mockState.events = { ...emptyEvents };
+    confirmMock.mockResolvedValue(true);
+    await renderPage();
+    const pauseBtn = screen.getByText("robot.action_pause");
+    await act(async () => { fireEvent.click(pauseBtn); });
+    await waitFor(() => {
+      expect(pauseMutateMock).toHaveBeenCalledWith(
+        "r1",
+        expect.objectContaining({ onSuccess: expect.any(Function) }),
+      );
+    });
+  });
+
+  it("移除箱体：取消确认时不触发 removeBox.mutate", async () => {
+    mockState.robot = { ...baseRobot, activeBoxId: null, activeSessionCode: null };
+    mockState.events = { ...emptyEvents };
+    confirmMock.mockResolvedValue(false);
+    await renderPage();
+    const removeBtn = await screen.findByTestId("remove-box-btn");
+    await act(async () => { fireEvent.click(removeBtn); });
+    await waitFor(() => expect(confirmMock).toHaveBeenCalledTimes(1));
+    expect(removeMutateMock).not.toHaveBeenCalled();
+  });
+
+  it("移除箱体：确认后以 closePosition: false（非活跃箱默认不勾选平仓，confirm 内容不含平仓勾选框）触发 removeBox.mutate", async () => {
+    mockState.robot = { ...baseRobot, activeBoxId: null, activeSessionCode: null };
+    mockState.events = { ...emptyEvents };
+    confirmMock.mockResolvedValue(true);
+    await renderPage();
+    const removeBtn = await screen.findByTestId("remove-box-btn");
+    await act(async () => { fireEvent.click(removeBtn); });
+    await waitFor(() => {
+      expect(removeMutateMock).toHaveBeenCalledWith(
+        { configId: "b1", closePosition: false },
+        expect.objectContaining({ onSuccess: expect.any(Function), onError: expect.any(Function) }),
+      );
+    });
+    // 非活跃箱：confirm 弹窗内容为纯文案，不含平仓勾选框
+    const { body } = confirmMock.mock.calls[0][0];
+    const { container } = render(body as React.ReactElement);
+    expect(container.querySelector('[data-testid="close-pos-checkbox"]')).toBeNull();
+  });
+
+  it("移除活跃箱体：confirm 弹窗内容含平仓勾选框（isActiveBox 分支），未勾选时仍以 closePosition: false 触发 removeBox.mutate", async () => {
+    mockState.robot = { ...baseRobot, activeBoxId: "b1", activeSessionCode: "ETHUSDT_1" };
+    mockState.events = { ...emptyEvents, price: 1734, fsm: "RUNNING" };
+    confirmMock.mockResolvedValue(true);
+    await renderPage();
+    const removeBtn = await screen.findByTestId("remove-box-btn");
+    await act(async () => { fireEvent.click(removeBtn); });
+    await waitFor(() => expect(confirmMock).toHaveBeenCalledTimes(1));
+    // 活跃箱：confirm 弹窗内容包含平仓勾选框（区别于非活跃箱分支）
+    const { body } = confirmMock.mock.calls[0][0];
+    const { container } = render(body as React.ReactElement);
+    expect(container.querySelector('[data-testid="close-pos-checkbox"]')).toBeTruthy();
+    await waitFor(() => {
+      expect(removeMutateMock).toHaveBeenCalledWith(
+        { configId: "b1", closePosition: false },
+        expect.objectContaining({ onSuccess: expect.any(Function), onError: expect.any(Function) }),
+      );
+    });
+  });
+
+  it("停止机器人：取消勾选 stop-close-pos-checkbox（默认勾选→用户取消勾选）后，以 closePosition: false 触发 stopRobot.mutate", async () => {
+    mockState.robot = { ...baseRobot, status: "RUNNING", activeBoxId: null, activeSessionCode: null };
+    mockState.events = { ...emptyEvents };
+    let resolveConfirm: (v: boolean) => void = () => {};
+    confirmMock.mockImplementation(
+      () => new Promise<boolean>((resolve) => { resolveConfirm = resolve; }),
+    );
+    await renderPage();
+    const stopBtn = screen.getByText("robot.action_stop");
+    await act(async () => { fireEvent.click(stopBtn); });
+    await waitFor(() => expect(confirmMock).toHaveBeenCalledTimes(1));
+    // 渲染 confirm() 实际接收到的 body（与 handleStop 内部闭包的 closePosRef 共享同一个 onChange 函数引用）
+    const { body } = confirmMock.mock.calls[0][0];
+    const { container } = render(body as React.ReactElement);
+    const checkbox = container.querySelector('[data-testid="stop-close-pos-checkbox"]') as HTMLInputElement;
+    expect(checkbox).toBeTruthy();
+    expect(checkbox.checked).toBe(true); // 默认勾选
+    await act(async () => { fireEvent.click(checkbox); }); // 用户取消勾选
+    expect(checkbox.checked).toBe(false);
+    await act(async () => { resolveConfirm(true); });
+    await waitFor(() => {
+      expect(stopMutateMock).toHaveBeenCalledWith(
+        { id: "r1", closePosition: false },
+        expect.objectContaining({ onSuccess: expect.any(Function) }),
+      );
+    });
+  });
+
+  it("移除活跃箱体：勾选 close-pos-checkbox（默认不勾选→用户勾选）后，以 closePosition: true 触发 removeBox.mutate", async () => {
+    mockState.robot = { ...baseRobot, activeBoxId: "b1", activeSessionCode: "ETHUSDT_1" };
+    mockState.events = { ...emptyEvents, price: 1734, fsm: "RUNNING" };
+    let resolveConfirm: (v: boolean) => void = () => {};
+    confirmMock.mockImplementation(
+      () => new Promise<boolean>((resolve) => { resolveConfirm = resolve; }),
+    );
+    await renderPage();
+    const removeBtn = await screen.findByTestId("remove-box-btn");
+    await act(async () => { fireEvent.click(removeBtn); });
+    await waitFor(() => expect(confirmMock).toHaveBeenCalledTimes(1));
+    const { body } = confirmMock.mock.calls[0][0];
+    const { container } = render(body as React.ReactElement);
+    const checkbox = container.querySelector('[data-testid="close-pos-checkbox"]') as HTMLInputElement;
+    expect(checkbox).toBeTruthy();
+    expect(checkbox.checked).toBe(false); // 默认不勾选
+    await act(async () => { fireEvent.click(checkbox); }); // 用户勾选平仓
+    expect(checkbox.checked).toBe(true);
+    await act(async () => { resolveConfirm(true); });
+    await waitFor(() => {
+      expect(removeMutateMock).toHaveBeenCalledWith(
+        { configId: "b1", closePosition: true },
+        expect.objectContaining({ onSuccess: expect.any(Function), onError: expect.any(Function) }),
+      );
+    });
   });
 });

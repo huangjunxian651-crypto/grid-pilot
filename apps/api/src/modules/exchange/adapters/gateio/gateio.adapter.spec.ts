@@ -3,11 +3,16 @@ import nock from 'nock';
 import { GATEIO_REST_TESTNET } from './gateio.types';
 
 // 在模块边界 mock WS client：可控的 EventEmitter 式假客户端，connect/authenticate 立即 resolve。
+// 记录构造函数收到的第二参数 environment，用于验证 adapter 是否把 this.environment 透传给它创建的 GateioWsClient。
 const h = vi.hoisted(() => {
-  const wsInstances: Array<{ handlers: Record<string, Array<(a: unknown) => void>>; emitData: (a: unknown) => void }> = [];
+  const wsInstances: Array<{ handlers: Record<string, Array<(a: unknown) => void>>; emitData: (a: unknown) => void; environment: unknown }> = [];
   class FakeGateioWsClient {
     handlers: Record<string, Array<(a: unknown) => void>> = {};
-    constructor() { wsInstances.push(this); }
+    environment: unknown;
+    constructor(_credentials: unknown, environment?: unknown) {
+      this.environment = environment;
+      wsInstances.push(this);
+    }
     async connect() {}
     async authenticate() {}
     subscribe() {}
@@ -170,5 +175,47 @@ describe('GateioAdapter.watchOrderFills 顺序不变量', () => {
     await collect;
 
     expect(got).toEqual(['M1', 'M2', 'M3']);
+  });
+});
+
+describe('GateioAdapter → GateioWsClient environment 透传', () => {
+  beforeEach(() => { h.wsInstances.length = 0; });
+
+  it('environment: "live" 透传给 watchOrderFills 创建的 GateioWsClient', async () => {
+    const adapter = new GateioAdapter({ apiKey: 'k', apiSecret: 's', environment: 'live' });
+    vi.spyOn(adapter as unknown as { getContractSize: (s: string) => Promise<number> }, 'getContractSize')
+      .mockResolvedValue(1);
+
+    const collect = (async () => {
+      for await (const _f of adapter.watchOrderFills('')) {
+        break;
+      }
+    })();
+
+    await new Promise((r) => setTimeout(r, 0));
+    const ws = h.wsInstances[h.wsInstances.length - 1];
+    expect(ws.environment).toBe('live');
+
+    ws.emitData({ channel: 'futures.usertrades', result: { id: '1', order_id: 'o', contract: 'ETH_USDT', size: 1, price: '100', fee: '0', create_time_ms: 1 } });
+    await collect;
+  });
+
+  it('environment 缺省 → watchOrderFills 创建的 GateioWsClient 收到 "demo"', async () => {
+    const adapter = new GateioAdapter({ apiKey: 'k', apiSecret: 's' });
+    vi.spyOn(adapter as unknown as { getContractSize: (s: string) => Promise<number> }, 'getContractSize')
+      .mockResolvedValue(1);
+
+    const collect = (async () => {
+      for await (const _f of adapter.watchOrderFills('')) {
+        break;
+      }
+    })();
+
+    await new Promise((r) => setTimeout(r, 0));
+    const ws = h.wsInstances[h.wsInstances.length - 1];
+    expect(ws.environment).toBe('demo');
+
+    ws.emitData({ channel: 'futures.usertrades', result: { id: '1', order_id: 'o', contract: 'ETH_USDT', size: 1, price: '100', fee: '0', create_time_ms: 1 } });
+    await collect;
   });
 });

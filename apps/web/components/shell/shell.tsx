@@ -17,6 +17,8 @@ import { getAccounts } from "@/lib/api";
 import { useCredentials } from "@/lib/hooks/useCredentials";
 import { aggregateSnapshots } from "@/lib/store";
 import { WelcomeRebateModal } from "@/components/referral/welcome-rebate-modal";
+import { useRobots } from "@/lib/hooks/useBots";
+import { hasActiveLiveRobots } from "@/lib/shell-live-banner";
 
 export function TickerProvider({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
@@ -35,6 +37,9 @@ export function Shell({
   const active = getActive(pathname);
   const isMobile = useIsMobile();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const { t } = useLang();
+  const { data: robots } = useRobots();
+  const showLiveBanner = hasActiveLiveRobots(robots ?? []);
 
   return (
     <div style={{ display: "flex", height: "100vh", background: "var(--bg-0)", color: "var(--fg-0)", overflow: "hidden", fontFamily: "var(--font-sans)", fontSize: 13 }}>
@@ -57,6 +62,19 @@ export function Shell({
           isMobile={isMobile}
           onMenuClick={() => setSidebarOpen(true)}
         />
+        {showLiveBanner && (
+          <div
+            data-testid="shell-live-banner"
+            style={{
+              display: "flex", alignItems: "center", gap: 8, padding: "8px 20px",
+              background: "var(--alpha-tint)", color: "var(--warn)", fontSize: 12, fontWeight: 500,
+              borderBottom: "1px solid var(--border-subtle)", flexShrink: 0,
+            }}
+          >
+            <Icons.Alert size={13} />
+            {t("shell.live_banner")}
+          </div>
+        )}
         <div style={{ flex: 1, overflow: "auto", padding: isMobile ? "12px 16px" : "20px 28px" }}>
           {children}
         </div>
@@ -120,6 +138,7 @@ function SidebarAccount() {
 function getActive(pathname: string): string {
   if (pathname === "/" || pathname === "/dashboard") return "dashboard";
   if (pathname.startsWith("/robots")) return "robots";
+  if (pathname.startsWith("/evaluation")) return "evaluation";
   if (pathname.startsWith("/history")) return "history";
   if (pathname.startsWith("/ai")) return "ai";
   if (pathname.startsWith("/keys")) return "keys";
@@ -147,6 +166,7 @@ function Sidebar({ active, isMobile, open, onClose }: { active: string; isMobile
   const items = [
     { id: "dashboard", label: t("nav.dashboard"), icon: <Icons.Dashboard size={15} />, href: "/dashboard" },
     { id: "robots", label: t("nav.robots"), icon: <Icons.Bot size={15} />, href: "/robots" },
+    { id: "evaluation", label: t("nav.evaluation"), icon: <Icons.TrendingUp size={15} />, href: "/evaluation" },
     { id: "history", label: t("nav.history"), icon: <Icons.History size={15} />, href: "/history" },
     { id: "ai", label: t("nav.ai"), icon: <Icons.Sparkles size={15} />, href: "/ai" },
     { id: "keys", label: t("nav.keys"), icon: <Icons.Key size={15} />, href: "/keys" },

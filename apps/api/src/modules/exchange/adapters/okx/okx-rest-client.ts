@@ -6,12 +6,13 @@ import axios, { AxiosInstance, AxiosError } from "axios";
 import { createHmac } from "crypto";
 import { ExchangeError } from "../../interfaces/exchange-adapter.interface";
 import { OKX_REST_DEMO, OKX_SIMULATED_TRADING_HEADER, OkxCredentials } from "./okx.types";
+import { ExchangeEnvironment } from "@gridpilot/shared-types";
 
 export class OkxRestClient {
   private client: AxiosInstance;
   private credentials: OkxCredentials;
 
-  constructor(credentials: OkxCredentials, baseUrl?: string) {
+  constructor(credentials: OkxCredentials, baseUrl?: string, environment: ExchangeEnvironment = "demo") {
     this.credentials = credentials;
     this.client = axios.create({
       baseURL: baseUrl ?? OKX_REST_DEMO,
@@ -19,7 +20,7 @@ export class OkxRestClient {
       headers: {
         "Content-Type": "application/json",
         "OK-ACCESS-KEY": credentials.apiKey,
-        "x-simulated-trading": OKX_SIMULATED_TRADING_HEADER,
+        ...(environment === "demo" ? { "x-simulated-trading": OKX_SIMULATED_TRADING_HEADER } : {}),
       },
     });
 

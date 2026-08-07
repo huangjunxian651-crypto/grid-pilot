@@ -487,6 +487,7 @@ export interface Robot {
   managed: boolean;
   latestPrice: number | null;
   exchangeId: string;
+  environment: "demo" | "live";
   accountLabel: string;
   credentialId: string;
   boxCount: number;
@@ -497,6 +498,8 @@ export interface Robot {
   totalPnl: number | null;
   activeBoxHighPrice: number | null;
   activeBoxLowPrice: number | null;
+  /** 活跃箱杠杆；保证金回报率的分母输入。无活跃箱时为 null。 */
+  activeBoxLeverage: number | null;
   lastPositionQty: number | null;
   lastEntryPrice: number | null;
   lastUnrealizedPnl: number | null;
@@ -536,6 +539,8 @@ export const robotApi = {
       `/trading-engine/robots/${id}/reconcile`,
       { method: "POST" },
     ),
+  marketConstraints: (id: string) =>
+    fetchJson<{ minQty: number; minNotional: number; stepSize: number } | null>(`/trading-engine/robots/${id}/market-constraints`),
   addBox: (robotId: string, input: AddBoxInput) =>
     fetchJson<{ success: boolean; boxId: string }>(`/trading-engine/robots/${robotId}/boxes`, {
       method: "POST",
@@ -698,4 +703,65 @@ export interface AiSettingsUpdate {
 export const aiSettingsApi = {
   get: () => fetchJson<AiSettingsMasked>("/ai/settings"),
   update: (data: AiSettingsUpdate) => fetchJson<AiSettingsMasked>("/ai/settings", { method: "PUT", body: JSON.stringify(data) }),
+};
+
+// ── 策略评价指标（evaluation 页） ──
+export type MetricsWindow = "24h" | "7d" | "30d";
+
+export interface RobotMetrics {
+  netPnl: number;
+  grossProfit: number;
+  totalFees: number;
+  feeRateBp: number;
+  feeToGross: number | null;
+  funding: number;
+  alpha: number;
+  alphaRateBp: number;
+  winRate: number;
+  avgPnlPerFill: number | null;
+  gridCoverage: number | null;
+  fillCount: number;
+  fillsPerDay: number;
+  turnover: number;
+  netPositionChange: number;
+  maxDrawdown: number | null;
+  unrealizedPnl: number | null;
+  netExposure: number | null;
+}
+
+export interface RobotMetricsEntry {
+  robotId: string;
+  exchange: string;
+  symbol: string;
+  runCode: string;
+  startedAt: string;
+  metrics: RobotMetrics;
+  dataQuality: { fills: number; windowCovered: boolean };
+}
+
+export interface StrategyMetricsResponse {
+  window: MetricsWindow;
+  generatedAt: string;
+  aggregate: RobotMetrics;
+  robots: RobotMetricsEntry[];
+}
+
+export interface MetricsSeriesPoint {
+  t: string;
+  cumNetPnl: number;
+  cumAlpha: number;
+}
+
+export interface StrategySeriesResponse {
+  robotId: string;
+  window: MetricsWindow;
+  bucketMs: number;
+  points: MetricsSeriesPoint[];
+}
+
+export const evaluationApi = {
+  strategyMetrics: (window: MetricsWindow) =>
+    fetchJson<StrategyMetricsResponse>(`/trading-engine/metrics/strategy?window=${window}`),
+  strategySeries: (robotId: string, window: MetricsWindow) =>
+    fetchJson<StrategySeriesResponse>(`/trading-engine/metrics/strategy/series?robotId=${encodeURIComponent(robotId)}&window=${window}`),
 };

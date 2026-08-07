@@ -1,6 +1,6 @@
 // BinanceAdapter — USD-M 永续合约适配器
-// 使用 axios 直接对接 Binance Testnet REST API
-// 对接 Binance Testnet
+// 使用 axios 直接对接 Binance REST API
+// 按 environment 路由端点：demo(默认，模拟盘 BINANCE_REST_DEMO) / live(实盘 BINANCE_REST_LIVE)
 
 import { createHmac } from "crypto";
 import axios, { AxiosError } from "axios";
@@ -21,11 +21,12 @@ import {
   CreateAlgoOrderParams,
   FundingFeeRecord,
 } from "../../interfaces/exchange-adapter.interface";
-import { BINANCE_REST_DEMO, BINANCE_WS_DEMO } from "./binance.types";
+import { BINANCE_REST_DEMO, BINANCE_WS_DEMO, BINANCE_REST_LIVE, BINANCE_WS_LIVE } from "./binance.types";
 import { BinanceWsClient } from "./binance-ws-client";
 import { toBinanceSymbol, toBinanceClientId } from "../utils";
 import { withRetry } from "../utils/retry";
 import { formatPrice, formatQty, toFixedPrecision } from "../../../trading-engine/pricing/format-precision";
+import { ExchangeEnvironment } from "@gridpilot/shared-types";
 
 /**
  * -2011 "Unknown order sent."：订单不存在/已撤/已成交（testnet 实测
@@ -162,6 +163,7 @@ export class BinanceAdapter implements IExchangeAdapter {
   private apiSecret: string;
   private baseUrl: string;
   private wsUrl: string;
+  private environment: ExchangeEnvironment;
   private http = axios.create({ timeout: 30000 });
 
   // WebSocket clients (lazy initialized)
@@ -174,12 +176,13 @@ export class BinanceAdapter implements IExchangeAdapter {
   // Cache for MarketInfo to avoid repeated API calls
   private marketInfoCache = new Map<string, MarketInfo>();
 
-  constructor(credentials: { apiKey: string; apiSecret: string; accountId?: string }) {
+  constructor(credentials: { apiKey: string; apiSecret: string; accountId?: string; environment?: ExchangeEnvironment }) {
     this.apiKey = credentials.apiKey;
     this.apiSecret = credentials.apiSecret;
     this.accountId = credentials.accountId ?? "binance-account";
-    this.baseUrl = BINANCE_REST_DEMO;
-    this.wsUrl = BINANCE_WS_DEMO;
+    this.environment = credentials.environment ?? "demo";
+    this.baseUrl = this.environment === "live" ? BINANCE_REST_LIVE : BINANCE_REST_DEMO;
+    this.wsUrl = this.environment === "live" ? BINANCE_WS_LIVE : BINANCE_WS_DEMO;
   }
 
   // ── Private REST Helper ─────────────────────────────────────
@@ -354,7 +357,7 @@ export class BinanceAdapter implements IExchangeAdapter {
   // ── WebSocket Streams ─────────────────────────────────────────
 
   async *watchTicker(symbol: string): AsyncIterableIterator<Ticker> {
-    const client = new BinanceWsClient({ apiKey: this.apiKey, apiSecret: this.apiSecret }, false);
+    const client = new BinanceWsClient({ apiKey: this.apiKey, apiSecret: this.apiSecret }, false, this.environment);
     this.activeWsClients.add(client);
     const STREAM_TIMEOUT_MS = 30000; // 30s without any tick is considered stale
     try {
@@ -425,7 +428,7 @@ export class BinanceAdapter implements IExchangeAdapter {
   }
 
   async *watchOrderFills(_symbol: string): AsyncIterableIterator<OrderFill> {
-    const client = new BinanceWsClient({ apiKey: this.apiKey, apiSecret: this.apiSecret }, true);
+    const client = new BinanceWsClient({ apiKey: this.apiKey, apiSecret: this.apiSecret }, true, this.environment);
     this.activeWsClients.add(client);
     try {
       await client.connect();
@@ -461,7 +464,7 @@ export class BinanceAdapter implements IExchangeAdapter {
   }
 
   async *watchAlgoTriggers(_symbol: string): AsyncIterableIterator<AlgoTrigger> {
-    const client = new BinanceWsClient({ apiKey: this.apiKey, apiSecret: this.apiSecret }, true);
+    const client = new BinanceWsClient({ apiKey: this.apiKey, apiSecret: this.apiSecret }, true, this.environment);
     this.activeWsClients.add(client);
     try {
       await client.connect();
@@ -512,7 +515,7 @@ export class BinanceAdapter implements IExchangeAdapter {
   }
 
   async *watchPositions(_symbol: string): AsyncIterableIterator<Position> {
-    const client = new BinanceWsClient({ apiKey: this.apiKey, apiSecret: this.apiSecret }, true);
+    const client = new BinanceWsClient({ apiKey: this.apiKey, apiSecret: this.apiSecret }, true, this.environment);
     this.activeWsClients.add(client);
     try {
       await client.connect();

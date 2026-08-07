@@ -6,7 +6,7 @@ import { useLang } from "@/lib/i18n-context";
 import { Button, SectionHeader } from "@/components/ui/primitives";
 import { Icons } from "@/components/ui/icons";
 import { useNotifications } from "@/lib/hooks/useNotifications";
-import { resolveNotificationBody } from "@/lib/notification-body";
+import { resolveNotificationBody, resolveNotificationTitle } from "@/lib/notification-body";
 import { RebateReminderCard } from "@/components/referral/rebate-reminder-card";
 
 // 类型 → 着色：alert=红 / alpha=金 / warn=金(警告) / info=蓝(maker)，与设计稿一致
@@ -194,7 +194,7 @@ export default function NotificationsPage() {
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
-                    <div style={{ fontWeight: 600, fontSize: 14 }}>{n.title}</div>
+                    <div style={{ fontWeight: 600, fontSize: 14 }}>{resolveNotificationTitle(n, t)}</div>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
                       {n.rangeId && (
                         <span

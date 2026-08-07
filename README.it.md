@@ -29,13 +29,13 @@ Rispetto al "compra e mantieni": il "compra e mantieni" guadagna solo se alla fi
 ## 🤔 Prima di usare una griglia, fatti queste cinque domande
 
 **Il prezzo sta ancora scendendo — perché la griglia si affretta a riempire la posizione proprio sul massimo?**
-La griglia nativa apre appena il prezzo entra nell'intervallo. GridPilot usa l'**apertura con trailing**: segue prima il minimo ed entra solo dopo che un rimbalzo dello 0,2% conferma la tenuta — niente tentativi di indovinare il fondo, niente posizioni incastrate dal primo minuto.
+La griglia nativa apre appena il prezzo entra nell'intervallo. GridPilot usa l'**apertura con trailing**: segue prima il minimo ed entra solo dopo che un rimbalzo dello 0,2% (valore predefinito, regolabile) conferma la tenuta — niente tentativi di indovinare il fondo, niente posizioni incastrate dal primo minuto. (Il trailing scatta solo quando il prezzo entra nella finestra di attivazione in direzione della perdita; se risale nell'intervallo da un livello più profondo, il trailing viene saltato e il bot parte direttamente.)
 
 **Il mercato si muove ogni secondo — perché i tuoi ordini, una volta piazzati, non si muovono più?**
-GridPilot ridecide a ogni aggiornamento di mercato: annulla quando serve, modifica quando serve, e in qualsiasi istante sul book potrebbe non esserci alcun ordine. Quando il prezzo è sfavorevole rifiuta invece di inseguire; quando può eseguire come Maker (0,02%) non regala mai una commissione Taker (0,05%).
+GridPilot ridecide a ogni aggiornamento di mercato: annulla quando serve, modifica quando serve, e in qualsiasi istante sul book potrebbe non esserci alcun ordine. Quando il prezzo è favorevole insegue il book per posizionarsi al miglior prezzo; quando è sfavorevole preferisce attivare il circuit breaker e rifiutare l'ordine. Quando può eseguire come Maker (0,02%) non regala mai una commissione Taker (0,05%). Questo inseguimento non comporta alcun rischio al ribasso: se il prezzo continua a scendere oltre il prezzo di griglia, il bot insegue e compra a un prezzo ancora più basso; se rimbalza senza superare la linea superiore, l'ordine può comunque eseguire al prezzo originale — secondo un modello standard di rovina del giocatore (gambler's ruin), la probabilità di perdere davvero l'esecuzione è trascurabile — il sovra-profitto è gratuito, e perderlo non costa nulla.
 
 **Il prezzo salta di 5–10 USDT in un colpo solo — la tua griglia sa fare altro oltre a stare a guardare?**
-Gli ordini statici possono incassare solo il prezzo morto sulla linea della griglia. Quando lo spread supera di 2 volte la commissione Taker, GridPilot esegue attivamente a mercato e si mette in tasca lo spread extra oltre il passo della griglia — e i test dimostrano che più l'order book di un exchange è "irregolare", maggiore è il rendimento in eccesso.
+Gli ordini statici possono incassare solo il prezzo morto sulla linea della griglia. Quando il prezzo si discosta dal prezzo teorico della griglia oltre una soglia (default 0,1% ≈ 2× la commissione Taker, regolabile), GridPilot esegue attivamente a mercato e si mette in tasca lo spread extra oltre il passo della griglia — e i test dimostrano che più l'order book di un exchange è "irregolare", maggiore è il rendimento in eccesso.
 
 **Una breve rottura al ribasso — perché liquidare l'intera posizione a mercato in un colpo solo?**
 La chiusura con un clic paga la commissione Taker *e* rinuncia al rimbalzo. GridPilot **riduce a scaglioni con ordini limite** nella zona tampone dello stop loss; se il prezzo rimbalza, la posizione residua continua a guadagnare. Solo quando viene violata la linea di liquidazione entra in gioco l'ultimo ordine condizionato di salvaguardia.
@@ -48,8 +48,8 @@ GridPilot preconfigura più intervalli non sovrapposti e attiva quello in cui en
 | Dimensione | Griglia nativa dell'exchange | GridPilot |
 |------|----------------|-----------|
 | **Processo decisionale** | Ordini statici di massa, immobili una volta piazzati | Monitoraggio automatizzato: rivaluta a ogni aggiornamento di mercato prima di piazzare/modificare/annullare ordini in modo dinamico; in qualsiasi istante potrebbe non esserci alcun ordine attivo |
-| **Qualità di esecuzione** | Gli ordini statici incassano solo il prezzo sulla linea della griglia; lo spread extra di un salto passa oltre | Insegue bid/ask migliori per posizionarsi al prezzo ottimale; esegue attivamente quando lo spread supera 2× la commissione Taker per bloccare il profitto extra; rifiuta direttamente gli ordini a prezzi sfavorevoli |
-| **Tempistica di apertura** | Apre la posizione subito all'ingresso nell'intervallo | Apertura con trailing: segue il minimo e costruisce la posizione solo dopo un rimbalzo confermato dello 0,2% |
+| **Qualità di esecuzione** | Gli ordini statici incassano solo il prezzo sulla linea della griglia; lo spread extra di un salto passa oltre | Si ancora al book posizionandosi al miglior prezzo, con esecuzioni mai peggiori del prezzo teorico; quando il prezzo si discosta dal teorico oltre la soglia (default ≈2× la commissione) esegue attivamente a mercato per bloccare il profitto extra; se il prezzo è sfavorevole attiva il circuit breaker e rifiuta l'ordine |
+| **Tempistica di apertura** | Apre la posizione subito all'ingresso nell'intervallo | Apertura con trailing: quando il prezzo entra in direzione della perdita, segue il minimo e costruisce la posizione solo dopo un rimbalzo confermato (default 0,2%) |
 | **Stop loss** | Liquidazione a mercato in un colpo solo a un unico prezzo | Riduzione a scaglioni con ordini limite nella zona tampone; la posizione residua beneficia direttamente del rimbalzo; un ordine condizionato di salvaguardia sulla linea di liquidazione |
 | **Adattamento al mercato** | Un unico intervallo fisso | Più intervalli non sovrapposti: si attiva quello in cui entra il prezzo, gli altri restano dormienti |
 
@@ -65,7 +65,7 @@ GridPilot preconfigura più intervalli non sovrapposti e attiva quello in cui en
 
 ## 💰 Capire le commissioni e risparmiare usando un codice invito alla registrazione (sponsor rebateto.me)
 
-Le commissioni sono riscosse dagli exchange, **GridPilot non trattiene un centesimo**. Per una stessa operazione, Maker ≈0,02%, Taker ≈0,05%. Con la leva e una griglia ad alta frequenza, le commissioni vengono amplificate silenziosamente e, accumulandosi giorno dopo giorno, non sono affatto trascurabili — GridPilot di default piazza ordini Maker al posto tuo, risparmiando circa 0,03% per operazione, ed esegue attivamente solo quando l'opportunità è fugace.
+Le commissioni sono riscosse dagli exchange, **GridPilot non trattiene un centesimo**. Per una stessa operazione, Maker ≈0,02%, Taker ≈0,05%. Anche gli ordini quotidiani della griglia nativa dell'exchange viaggiano come Maker (ordini limite), quindi sulle normali esecuzioni della griglia non c'è alcuna differenza di commissioni; il vantaggio di GridPilot emerge in tre momenti chiave — ① all'ingresso: piazza l'ordine solo dopo la conferma del rimbalzo, invece di aprire subito a mercato appena il prezzo entra nell'intervallo; ② allo stop loss: riduce a scaglioni con ordini limite, invece di liquidare tutto a mercato con un clic; ③ negli ordini a mercato: ricorre al Taker solo quando lo spread in eccesso copre davvero la commissione.
 
 C'è di più: **inserendo un codice di rimborso alla registrazione sull'exchange, puoi farti restituire a lungo termine circa il 20% delle commissioni già pagate (Gate 40%), accreditato automaticamente** — equivale a un ulteriore sconto su ogni operazione.
 
@@ -133,20 +133,22 @@ pnpm dev:skip-infra   # API + Web, salta docker
 ## 🕹️ Istruzioni per l'uso
 
 1. **Connetti l'exchange**: nelle impostazioni inserisci API Key/Secret. **Concedi solo il permesso di trading sui contratti, non abilitare mai il permesso di prelievo.**
-2. **Configura la griglia**: scegli la coppia di trading e l'intervallo di prezzo, imposta numero di griglie principali, passo, quantità per griglia, leva, tampone di stop loss e parametri di apertura con trailing.
+2. **Configura la griglia**: scegli la coppia di trading e la direzione (long/short), imposta l'ancora del prezzo di take profit, numero/passo delle griglie principali, quantità per griglia, leva, tampone di stop loss e parametri di apertura con trailing (i confini del box sono derivati automaticamente dall'ancora del take profit + numero e passo delle griglie).
 3. **Avvia il bot**: entra in apertura con trailing → in esecuzione, il frontend mostra in tempo reale mercato, ordini, esecuzioni e macchina a stati.
-4. **Monitoraggio e chiusura**: l'attivazione del take profit interrompe gli incrementi e avvia la chiusura; l'attivazione del tampone di stop loss riduce la posizione a più livelli.
+4. **Monitoraggio e chiusura**: quando il prezzo raggiunge l'estremo del take profit, la griglia chiude a scaglioni fino a esaurire naturalmente la posizione, e a posizione azzerata esce con il take profit; se il prezzo scende nella zona tampone dello stop loss, riduce la posizione dinamicamente a scaglioni.
 
 Parametri chiave:
 
 | Parametro | Descrizione |
 |------|------|
 | `takeProfitPrice` | Prezzo di take profit (confine superiore del box) |
+| `direction` | Direzione: LONG (long) / SHORT (short) |
 | `mainGridCount` / `mainGridStep` | Numero di griglie principali / passo per griglia (USDT) |
 | `mainGridPortionSize` | Quantità d'ordine per griglia |
 | `leverage` | Moltiplicatore di leva |
 | `stopLossGridCount` / `stopLossGridStep` | Numero di griglie / passo della zona tampone di stop loss |
-| `activationPrice` / `trailingCallbackRate` | Prezzo di attivazione apertura con trailing / ampiezza di callback |
+| `isolationStep` | Larghezza della fascia di isolamento (default = passo della zona di stop loss) |
+| `activationPrice` / `trailingCallbackRate` | Prezzo di attivazione dell'intervallo (default: punto medio della griglia principale) / ampiezza di callback dell'apertura con trailing |
 | `excessProfitMultiplier` | Moltiplicatore di trigger della zona GTC (soglia del profitto in eccesso) |
 
 Per i parametri completi vedi [`docs/STRATEGY_SPEC.md`](docs/STRATEGY_SPEC.md).

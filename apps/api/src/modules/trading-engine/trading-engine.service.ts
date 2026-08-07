@@ -5,6 +5,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { ExchangeAdapterFactory } from '../exchange/exchange-adapter.factory';
 import { CredentialService } from '../credential/credential.service';
 import { GridBotRunner, type BotConfig, type PlacedOrder, type RunnerCriticalEvent } from './runner/grid-bot-runner';
+import { buildCriticalEventNotification } from './runner/critical-event-notification';
 import { NotificationService } from '../notification/notification.service';
 import { BotFsm } from './fsm/bot-fsm';
 import { StrategyEngine } from './strategy/strategy-engine';
@@ -223,6 +224,7 @@ export class TradingEngineService implements OnModuleInit, OnModuleDestroy {
       apiKey: credential.apiKey,
       apiSecret: credential.apiSecret,
       passphrase: credential.passphrase ?? undefined,
+      environment: credential.environment as "demo" | "live",
     });
     const adapter = new ExchangeAdapterBridge(legacyAdapter);
 
@@ -230,8 +232,10 @@ export class TradingEngineService implements OnModuleInit, OnModuleDestroy {
     let run = await this.prisma.run.findUnique({
       where: { runCode },
     });
+    let isNewRun = false;
 
     if (!run) {
+      isNewRun = true;
       // BUG-04: 新 run 的 pnl 状态机必须从交易所真实持仓起算。上一 run 未平干净
       // 的持仓会被本 run 接管交易（策略读交易所持仓），但 DB 从 0 起算会让
       // pnlSignedPosition/已实现盈亏从第一秒起永久偏离（三所实测全部命中）。
@@ -286,6 +290,24 @@ export class TradingEngineService implements OnModuleInit, OnModuleDestroy {
       });
     }
 
+    // P1: 复用存量 run（重启/复位）时，台账 PnL 状态必须先与交易所对账。
+    // 上一轮停止若丢失平仓成交，pnlSignedPosition/pnlAvgCost 会带着虚高持仓与
+    // 污染成本进入新会话（2026-07-27 OKX 实测偏差 2.32 ETH、账面盈亏失真约 -57u）。
+    // 先对账补录真实成交（reconcile），重锚退化为兜底——直接重锚会让迟到的平仓
+    // 成交之后被 sweep 补录时在干净状态上重复应用（空仓 → phantom 空仓）。
+    // 新建 run 已由 BUG-04 的 seed 直接写入交易所持仓，无需重复对账。
+    if (!isNewRun) {
+      try {
+        await this.fillReconcile.reconcileRun(runCode, configRecord.symbol, adapter);
+      } catch (err) {
+        this.logger.warn(`[${runCode}] pre-start reconcile failed (continuing): ${(err as Error).message}`);
+      }
+      // 对账可能已改写台账（补录成交会更新 pnlSignedPosition/pnlAvgCost），重读后再判漂移。
+      const fresh = await this.prisma.run.findUnique({ where: { id: run.id } });
+      if (fresh) run = fresh;
+      run = await this.realignRunPnlWithExchange(run, configRecord, adapter);
+    }
+
     const config = this.buildBotConfig(configRecord, runCode);
 
     await this.evictRunnersOnSymbol(config.symbol, configRecord.accountId, runCode);
@@ -331,6 +353,83 @@ export class TradingEngineService implements OnModuleInit, OnModuleDestroy {
       });
     } catch (err) {
       this.logger.warn(`[${runId}] captureRunStopBalance failed: ${(err as Error).message}`);
+    }
+  }
+
+  /** 启动前台账对账（P1）：复用存量 run 时，若 DB 推算持仓与交易所实时持仓漂移
+   * （同一格子的 detectPositionDrift 阈值），以交易所为准重锚 pnlSignedPosition/
+   * pnlAvgCost 并通知。偏差在一个格子以内不动（正常启停微差免打扰）；持仓查询
+   * 失败只告警不阻塞启动（与 BUG-04 新建 seed 同策）。 */
+  private async realignRunPnlWithExchange<T extends { id: string; runCode: string; pnlSignedPosition: number; pnlAvgCost: number; configSnapshot?: unknown }>(
+    run: T,
+    configRecord: { symbol: string; mainGridPortionSize: number },
+    adapter: ExchangeAdapter,
+  ): Promise<T> {
+    try {
+      const position = await adapter.getPosition(configRecord.symbol);
+      const exchangeQty = position?.baseAssetQty ?? 0;
+      // 阈值取 run 实际交易的快照配置（与运行期 checkPositionDrift 口径一致），
+      // 箱体在会话间被编辑时不改用新配置（code-review M3）。
+      const snapshotPortion = (run.configSnapshot as Record<string, unknown> | null)?.mainGridPortionSize as number | undefined;
+      const minPortion = snapshotPortion && snapshotPortion > 0 ? snapshotPortion : configRecord.mainGridPortionSize;
+      if (!minPortion || minPortion <= 0) return run;
+      if (!detectPositionDrift(run.pnlSignedPosition, exchangeQty, minPortion)) {
+        return run;
+      }
+      const exchangeAvgCost = Math.abs(exchangeQty) > 1e-12 ? position.entryPrice : 0;
+      this.logger.warn(
+        `[${run.runCode}] PnL ledger drifted from exchange (db=${run.pnlSignedPosition} exchange=${exchangeQty}), ` +
+        `re-anchoring to exchange truth before start`,
+      );
+      await this.prisma.run.update({
+        where: { id: run.id },
+        data: { pnlSignedPosition: exchangeQty, pnlAvgCost: exchangeAvgCost },
+      });
+      try {
+        await this.notificationService.createAndBroadcast({
+          type: 'alert',
+          title: 'PnL ledger re-anchored to exchange position',
+          code: 'POSITION_LEDGER_REANCHORED',
+          body: `${configRecord.symbol} ${run.runCode}: db=${run.pnlSignedPosition} → exchange=${exchangeQty} (avgCost=${exchangeAvgCost})`,
+          params: {
+            runCode: run.runCode,
+            source: 'start',
+            dbQty: run.pnlSignedPosition.toFixed(6),
+            exchangeQty: exchangeQty.toFixed(6),
+          },
+        });
+      } catch (err) {
+        this.logger.error(`[${run.runCode}] ledger-reanchor notification failed: ${(err as Error).message}`);
+      }
+      return { ...run, pnlSignedPosition: exchangeQty, pnlAvgCost: exchangeAvgCost };
+    } catch (err) {
+      this.logger.warn(`[${run.runCode}] pre-start pnl realign failed (continuing with db state): ${(err as Error).message}`);
+      return run;
+    }
+  }
+
+  /** run 终态后的最终成交对账：立即一次 + 延迟补拉一次。终态 run 退出周期 sweep，
+   * 平仓成交若 WS 没收到就再无机会入库（清算盈亏丢失）；周期 sweep 靠"下次必重拉"
+   * 闭合 order-before-fill 窗口，终态 run 没有下次：首发对账可能跑在 close 单
+   * order.create（fire-and-forget）提交前或成交在交易所 REST 端可见前，故延迟
+   * 几秒重拉一次关闭该窗口（幂等摄入）。用户停止与自动终态共用此路径。
+   * 返回立即对账的 Promise：STOP 余额快照等下游若依赖平仓盈亏落库，须 await
+   * （code-review I2：快照先于对账完成会永久记录不含平仓成交的 realizedPnl）。 */
+  private scheduleFinalReconciles(runCode: string, symbol: string, adapter: ExchangeAdapter): Promise<void> {
+    const immediate = this.runFinalReconcileOnce(runCode, symbol, adapter);
+    const timer = setTimeout(() => {
+      this.finalReconcileTimers.delete(timer);
+      void this.runFinalReconcileOnce(runCode, symbol, adapter);
+    }, TradingEngineService.FINAL_RECONCILE_RETRY_DELAY_MS);
+    this.finalReconcileTimers.add(timer);
+    return immediate;
+  }
+
+  private async runFinalReconcileOnce(runCode: string, symbol: string, adapter: ExchangeAdapter): Promise<void> {
+    try {
+      await this.fillReconcile.reconcileRun(runCode, symbol, adapter);
+    } catch (err) {
+      this.logger.warn(`[${runCode}] final reconcile failed: ${(err as Error).message}`);
     }
   }
 
@@ -386,6 +485,17 @@ export class TradingEngineService implements OnModuleInit, OnModuleDestroy {
       verifyAdapter && verifySymbol
         ? await this.forceCloseResidualAfterStop(runCode, verifyAdapter, verifySymbol)
         : false;
+
+    // 用户停止与自动终态同责：run 终态后退出周期 sweep，平仓（含兜底强平）成交
+    // 若 WS 没收到就再无机会入库——2026-07-27 OKX 实测用户关停的 2.316 ETH 平仓
+    // 成交丢失，台账持仓虚高、成本池未重置，后续 realizedPnl 失真约 -57u（P0）。
+    // 立即对账须 await：下方 STOP 快照读取的 realizedPnl 须含平仓成交（I2）。
+    if (verifyAdapter && verifySymbol) {
+      await this.scheduleFinalReconciles(runCode, verifySymbol, verifyAdapter);
+    }
+    // 漂移观测状态随会话拆除：runCode 跨重启复用，残留计数会让重启后的首次
+    // 观测立即确认漂移，绕过双观测防过期快照保护（code-review M5）。
+    this.driftObservations.delete(runCode);
 
     // Update run state
     const run = await this.prisma.run.findUnique({
@@ -531,29 +641,16 @@ export class TradingEngineService implements OnModuleInit, OnModuleDestroy {
     this.sessionCredentialMap.delete(runCode);
     this.sessionAdapterMap.delete(runCode);
     this.lastPersistedRunState.delete(runCode);
+    this.driftObservations.delete(runCode);
     if (credentialId) this.reconcileAccountPolling(credentialId);
     this.stopReconcileSweepIfNoRunners();
 
     // 终态后该 run 退出周期 sweep，closePosition 的成交若 WS 没收到就再无机会
-    // 入库（清算盈亏丢失）。趁 adapter 还在，补一次最终对账。
+    // 入库（清算盈亏丢失）。趁 adapter 还在，补最终对账。立即对账须 await：
+    // 下方 STOP 余额快照读取的 realizedPnl 须含平仓成交（code-review I2）。
     // runner/adapter 已被首次调用清掉时跳过（幂等重入）。
     if (runner && adapter) {
-      try {
-        await this.fillReconcile.reconcileRun(runCode, runner.symbol, adapter);
-      } catch (err) {
-        this.logger.warn(`[${runCode}] final reconcile on termination failed: ${(err as Error).message}`);
-      }
-      // 周期 sweep 靠"下次必重拉"闭合 order-before-fill 窗口，终态 run 没有
-      // 下次：首发对账可能跑在 close 单 order.create（fire-and-forget）提交前
-      // 或成交在交易所 REST 端可见前。延迟几秒重拉一次关闭该窗口（幂等摄入）。
-      const symbol = runner.symbol;
-      const timer = setTimeout(() => {
-        this.finalReconcileTimers.delete(timer);
-        void this.fillReconcile
-          .reconcileRun(runCode, symbol, adapter)
-          .catch((e) => this.logger.warn(`[${runCode}] delayed final reconcile failed: ${(e as Error).message}`));
-      }, TradingEngineService.FINAL_RECONCILE_RETRY_DELAY_MS);
-      this.finalReconcileTimers.add(timer);
+      await this.scheduleFinalReconciles(runCode, runner.symbol, adapter);
     }
 
     const dbStateMap: Record<string, string> = {
@@ -712,6 +809,7 @@ export class TradingEngineService implements OnModuleInit, OnModuleDestroy {
           apiKey: fullCred.apiKey,
           apiSecret: fullCred.apiSecret,
           passphrase: fullCred.passphrase ?? undefined,
+          environment: fullCred.environment as "demo" | "live",
         });
         const adapter = new ExchangeAdapterBridge(legacyAdapter);
 
@@ -748,6 +846,7 @@ export class TradingEngineService implements OnModuleInit, OnModuleDestroy {
       apiKey: fullCred.apiKey,
       apiSecret: fullCred.apiSecret,
       passphrase: fullCred.passphrase ?? undefined,
+      environment: fullCred.environment as "demo" | "live",
     });
     const adapter = new ExchangeAdapterBridge(legacyAdapter);
     const timeoutMs = TradingEngineService.SNAPSHOT_FETCH_TIMEOUT_MS;
@@ -770,6 +869,7 @@ export class TradingEngineService implements OnModuleInit, OnModuleDestroy {
       apiKey: credential.apiKey,
       apiSecret: credential.apiSecret,
       passphrase: credential.passphrase ?? undefined,
+      environment: credential.environment as "demo" | "live",
     });
     try {
       await adapter.getMarketInfo(symbol);
@@ -789,6 +889,35 @@ export class TradingEngineService implements OnModuleInit, OnModuleDestroy {
       this.logger.warn(
         `assertSymbolTradable(${credential.exchangeId}, ${symbol}) inconclusive: ${ex.message ?? String(err)}`,
       );
+    }
+  }
+
+  /** 拉取交易所最小下单量约束（minQty/minNotional/stepSize），供箱体保存前预校验用。拉取失败
+   * （凭证缺失、网络/鉴权等不确定错误）降级返回 null——不阻断箱体保存，与
+   * assertSymbolTradable 同一套"临时故障不挡创建"哲学；运行期 grid-bot-runner 的
+   * loadMarketConstraints() 仍有同源校验兜底。 */
+  async getMarketConstraints(
+    credentialId: string,
+    symbol: string,
+  ): Promise<{ minQty: number; minNotional: number; stepSize: number } | null> {
+    const credential = await this.credentialService.findOneWithSecrets(credentialId);
+    if (!credential) return null;
+    const adapter = this.adapterFactory.createAdapter({
+      exchangeId: credential.exchangeId,
+      accountId: credential.accountId,
+      apiKey: credential.apiKey,
+      apiSecret: credential.apiSecret,
+      passphrase: credential.passphrase ?? undefined,
+      environment: credential.environment as "demo" | "live",
+    });
+    try {
+      const info = await adapter.getMarketInfo(symbol);
+      return { minQty: info.minQty ?? 0, minNotional: info.minNotional ?? 0, stepSize: info.stepSize ?? 0 };
+    } catch (err) {
+      this.logger.warn(
+        `getMarketConstraints(${credential.exchangeId}, ${symbol}) failed, skipping pre-check: ${(err as Error).message}`,
+      );
+      return null;
     }
   }
 
@@ -884,14 +1013,48 @@ export class TradingEngineService implements OnModuleInit, OnModuleDestroy {
     this.logger.error(
       `[${runCode}] Exchange still holds ${pos.baseAssetQty} ${symbol} after liquidation — force closing`,
     );
+    let closeResult: { orderId?: string; filledQty?: number; avgFillPrice?: number } | null;
     try {
-      await this.withTimeout(adapter.closePosition(symbol, side), timeout, 'post-stop closePosition');
+      closeResult = await this.withTimeout(adapter.closePosition(symbol, side), timeout, 'post-stop closePosition');
     } catch (err) {
       this.logger.error(
         `[${runCode}] Post-stop force-close FAILED, position may remain on exchange: ${(err as Error).message}`,
       );
       await this.notifyResidualPositionRisk(runCode, symbol, pos.baseAssetQty, (err as Error).message);
       return true;
+    }
+    // 强平单落库：本路径不经 runner 的 emitCloseOrderPlaced，没有 Order 行则
+    // 最终对账拉到的强平成交无法归属本 run（resolveOrder 无匹配），盈亏/持仓漂移。
+    try {
+      const run = await this.prisma.run.findUnique({ where: { runCode }, select: { id: true } });
+      if (run && closeResult?.orderId) {
+        await this.prisma.order.create({
+          data: buildOrderCreateData(
+            {
+              runCode,
+              clientOrderId: '',
+              exchangeOrderId: closeResult.orderId,
+              side: pos.baseAssetQty > 0 ? 'SELL' : 'BUY',
+              qty: closeResult.filledQty || Math.abs(pos.baseAssetQty),
+              price: closeResult.avgFillPrice ?? 0,
+              gridIndex: -1,
+              orderType: 'CLOSE',
+              isAlgo: false,
+              preOrderPosition: pos.baseAssetQty,
+              isEntry: false,
+            },
+            run.id,
+          ),
+        });
+      } else if (run && !closeResult?.orderId) {
+        // 强平成功但交易所未返回 orderId：成交永远无法归属本 run，保持静默会
+        // 重演平仓盈亏丢失，必须留痕（code-review M4）。
+        this.logger.warn(
+          `[${runCode}] Force-close succeeded but exchange returned no orderId — fills will not be attributable to this run`,
+        );
+      }
+    } catch (err) {
+      this.logger.warn(`[${runCode}] persist force-close order failed: ${(err as Error).message}`);
     }
     return false;
   }
@@ -932,29 +1095,21 @@ export class TradingEngineService implements OnModuleInit, OnModuleDestroy {
     if (this.reportedCriticalEvents.has(key)) return;
     this.reportedCriticalEvents.add(key);
 
-    const meta: Record<RunnerCriticalEvent['kind'], { type: 'alert' | 'warn'; title: string; code: string }> = {
-      ORDER_REJECTED: { type: 'warn', title: 'Order rejected', code: 'RUNNER_ORDER_REJECTED' },
-      STOPPED_REJECTIONS: { type: 'alert', title: 'Orders rejected repeatedly, grid cannot operate', code: 'RUNNER_STOPPED_REJECTIONS' },
-      PAUSED_PERMANENT_ERROR: { type: 'alert', title: 'Bot paused: permanent configuration error', code: 'RUNNER_PAUSED_PERMANENT_ERROR' },
-      RESIDUAL_POSITION: { type: 'alert', title: 'Liquidation incomplete: residual position remains', code: 'RUNNER_RESIDUAL_POSITION' },
-    };
-    const { type, title, code } = meta[event.kind];
+    const exchange = this.sessionAdapterMap.get(runCode)?.exchange ?? 'UNKNOWN';
+    const notification = buildCriticalEventNotification(runCode, symbol, exchange, event);
     try {
-      await this.notificationService.createAndBroadcast({
-        type,
-        title,
-        body: `${symbol} ${runCode}: ${event.message}`,
-        code,
-        params: { symbol, runCode, reason: event.reason },
-      });
+      await this.notificationService.createAndBroadcast(notification);
     } catch (err) {
       this.logger.error(`[${runCode}] reportCriticalEvent failed: ${(err as Error).message}`);
       this.reportedCriticalEvents.delete(key);
     }
   }
 
-  /** 周期 sweep：比对 DB 推算持仓与 runner 已知的交易所持仓，超阈值只告警一次直至差值恢复
-   *（不暂停机器人，纯监控用途，交易所调用已由 runner.getState() 内存态提供，不产生额外 API 调用）。 */
+  /** 周期 sweep：比对 DB 推算持仓与 runner 已知的交易所持仓。旧行为仅告警（纯监控），
+   * 实测告警会连发而无人处理、台账虚高持续数日（2026-07-27 OKX 8 次 POSITION_DRIFT_DETECTED
+   * 后偏差 2.32 ETH 挂了 3 天）。确认漂移（连续两次观测，间隔约 60s，排除过期快照）后
+   * 自愈：以交易所为准重锚 pnlSignedPosition/pnlAvgCost 并通知。差值恢复后观测清零，
+   * 允许下次独立漂移重新计数、重新自愈。 */
   private async checkPositionDrift(runCode: string, runner: GridBotRunner): Promise<void> {
     const state = runner.getState();
     if (!state?.position) return;
@@ -972,22 +1127,41 @@ export class TradingEngineService implements OnModuleInit, OnModuleDestroy {
     observation.consecutive += 1;
     this.driftObservations.set(runCode, observation);
     if (observation.consecutive < TradingEngineService.DRIFT_ALERT_THRESHOLD_OBSERVATIONS) return;
+
+    const exchangeQty = state.position.baseAssetQty;
+    const exchangeAvgCost = Math.abs(exchangeQty) > 1e-12 ? state.position.entryPrice : 0;
+    // 每次确认漂移都重锚（幂等，写的是交易所真值）：重锚可能与 ingestInner 的
+    // 读-改-写竞争被末写者覆盖，若靠通知闩跳过重锚，漂移将永久静默（code-review I1）。
+    // 幂等闩只作用于通知，不作用于重锚。
+    this.logger.warn(
+      `[${runCode}] Position drift confirmed (db=${run.pnlSignedPosition} exchange=${exchangeQty}), re-anchoring ledger to exchange truth`,
+    );
+    try {
+      await this.prisma.run.update({
+        where: { id: run.id },
+        data: { pnlSignedPosition: exchangeQty, pnlAvgCost: exchangeAvgCost },
+      });
+    } catch (err) {
+      this.logger.error(`[${runCode}] drift re-anchor failed: ${(err as Error).message}`);
+      return;
+    }
     if (observation.alerted) return;
     observation.alerted = true;
     try {
       await this.notificationService.createAndBroadcast({
         type: 'alert',
-        title: 'Position drift detected',
-        code: 'POSITION_DRIFT_DETECTED',
-        body: `${runCode}: db=${run.pnlSignedPosition} exchange=${state.position.baseAssetQty}`,
+        title: 'PnL ledger re-anchored to exchange position',
+        code: 'POSITION_LEDGER_REANCHORED',
+        body: `${runCode}: db=${run.pnlSignedPosition} → exchange=${exchangeQty} (avgCost=${exchangeAvgCost})`,
         params: {
           runCode,
+          source: 'drift-monitor',
           dbQty: run.pnlSignedPosition.toFixed(6),
-          exchangeQty: state.position.baseAssetQty.toFixed(6),
+          exchangeQty: exchangeQty.toFixed(6),
         },
       });
     } catch (err) {
-      this.logger.error(`[${runCode}] position-drift notification failed: ${(err as Error).message}`);
+      this.logger.error(`[${runCode}] drift-reanchor notification failed: ${(err as Error).message}`);
       observation.alerted = false;
     }
   }

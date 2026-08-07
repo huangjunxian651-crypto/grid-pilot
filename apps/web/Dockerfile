@@ -16,6 +16,11 @@ ARG NEXT_PUBLIC_API_URL=http://localhost:3301
 ARG NEXT_PUBLIC_API_PORT=3301
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_PORT=$NEXT_PUBLIC_API_PORT
+# API_URL 供 next.config 的 rewrites() 使用：Next.js 在 build 时把 rewrites 目标烘焙进
+# routes-manifest.json，运行期 docker-compose 的 environment.API_URL 对已生成的 manifest 不生效，
+# 必须在此处以 build arg 形式传入 Docker 内网地址（compose 里通过 build.args 提供）
+ARG API_URL=http://localhost:3301
+ENV API_URL=$API_URL
 # next.config 的 loadRootEnv() 要求根目录存在 .env，构建期用 example 兜底
 RUN cp .env.example .env
 RUN pnpm --filter @gridpilot/shared-types build
@@ -28,7 +33,9 @@ WORKDIR /app
 COPY --from=build /app/apps/web/.next/standalone ./
 COPY --from=build /app/apps/web/.next/static ./apps/web/.next/static
 COPY --from=build /app/apps/web/public ./apps/web/public
-# 运行期 next.config 仍会执行 loadRootEnv()，提供 .env（compose 的 environment 会覆盖其中的值）
+# 运行期 next.config 仍会执行 loadRootEnv()，提供 .env 兜底；但 rewrites() 目标已在 build 阶段
+# 由上面的 API_URL build arg 固化进 routes-manifest.json，这里的 .env / compose environment
+# 对 rewrites 目标不再生效（其余运行期读取的变量如 WEB_URL 不受此限制）
 COPY --from=build /app/.env.example ./.env
 EXPOSE 3300
 CMD ["node", "apps/web/server.js"]

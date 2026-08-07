@@ -1,11 +1,12 @@
 // GateioWsClient — Gate.io Futures WebSocket 客户端
 // 手动实现，无官方 Node.js WS SDK
-// 对接 Gate.io 测试网
+// 按 environment 路由端点：demo(默认，测试网 GATEIO_WS_TESTNET) / live(实盘 GATEIO_WS_LIVE)
 // 连接生命周期(重连/心跳/清理)由 ReconnectingWsClient 基类统一管理
 
 import { createHmac } from "crypto";
 import { ReconnectingWsClient } from "../shared/reconnecting-ws-client";
-import { GATEIO_WS_TESTNET } from "./gateio.types";
+import { GATEIO_WS_TESTNET, GATEIO_WS_LIVE } from "./gateio.types";
+import { ExchangeEnvironment } from "@gridpilot/shared-types";
 
 interface WsMessage {
   time?: number;
@@ -37,11 +38,11 @@ export class GateioWsClient extends ReconnectingWsClient {
   private pendingSubscriptions: Array<{ channel: string; payload?: string[] }> = [];
   private activeSubscriptions: Array<{ channel: string; payload?: string[]; isPrivate: boolean }> = [];
 
-  constructor(credentials: { apiKey: string; apiSecret: string }) {
+  constructor(credentials: { apiKey: string; apiSecret: string }, environment: ExchangeEnvironment = "demo") {
     super("GateioWsClient");
     this.apiKey = credentials.apiKey;
     this.apiSecret = credentials.apiSecret;
-    this.url = GATEIO_WS_TESTNET;
+    this.url = environment === "live" ? GATEIO_WS_LIVE : GATEIO_WS_TESTNET;
   }
 
   protected buildConnectUrl(): string {

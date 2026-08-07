@@ -1,9 +1,19 @@
-import { describe, it, expect, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 const mockPush = vi.fn();
+
+const { confirmMock, pauseMutateMock, stopMutateMock } = vi.hoisted(() => ({
+  confirmMock: vi.fn(),
+  pauseMutateMock: vi.fn(),
+  stopMutateMock: vi.fn(),
+}));
+
+vi.mock("@/lib/hooks/useConfirm", () => ({
+  useConfirm: () => confirmMock,
+}));
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
@@ -41,6 +51,7 @@ vi.mock("@/lib/hooks/useBots", () => ({
         managed: false,
         latestPrice: null,
         exchangeId: "binance",
+        environment: "demo",
         accountLabel: "demo",
         credentialId: "cred-1",
         boxCount: 1,
@@ -68,6 +79,7 @@ vi.mock("@/lib/hooks/useBots", () => ({
         managed: true,
         latestPrice: 65000,
         exchangeId: "gateio",
+        environment: "live",
         accountLabel: "main",
         credentialId: "cred-2",
         boxCount: 2,
@@ -99,9 +111,9 @@ vi.mock("@/lib/hooks/useBots", () => ({
         stopStage: null, stopWarning: null },
     ],
   }),
-  usePauseRobot: () => ({ mutate: vi.fn() }),
+  usePauseRobot: () => ({ mutate: pauseMutateMock }),
   useStartRobot: () => ({ mutate: vi.fn() }),
-  useStopRobot: () => ({ mutate: vi.fn() }),
+  useStopRobot: () => ({ mutate: stopMutateMock }),
 }));
 
 vi.mock("@/lib/i18n-context", () => ({
@@ -116,6 +128,12 @@ function wrap(ui: React.ReactNode) {
 }
 
 describe("RobotsPage", () => {
+  beforeEach(() => {
+    confirmMock.mockReset();
+    pauseMutateMock.mockClear();
+    stopMutateMock.mockClear();
+  });
+
   it("shows start button for PAUSED robot", async () => {
     render(wrap(<RobotsPage />));
     await waitFor(() => {
@@ -139,5 +157,59 @@ describe("RobotsPage", () => {
     expect(screen.getByText("common.copy")).toBeTruthy();
     const viewAll = screen.getByText("robot.view_all_archived");
     expect(viewAll.closest("a")?.getAttribute("href")).toBe("/robots/archived");
+  });
+
+  it("正式环境机器人显示常驻徽章，模拟环境不显示", async () => {
+    render(wrap(<RobotsPage />));
+    const badges = await screen.findAllByTestId("robot-live-badge");
+    expect(badges).toHaveLength(1);
+  });
+
+  it("停止按钮：取消确认时不触发 stopRobot.mutate", async () => {
+    confirmMock.mockResolvedValue(false);
+    render(wrap(<RobotsPage />));
+    const stopButton = await screen.findByLabelText("robot.action_stop");
+    fireEvent.click(stopButton);
+
+    await waitFor(() => expect(confirmMock).toHaveBeenCalledTimes(1));
+    expect(stopMutateMock).not.toHaveBeenCalled();
+  });
+
+  it("停止按钮：确认后以 closePosition: true 触发 stopRobot.mutate", async () => {
+    confirmMock.mockResolvedValue(true);
+    render(wrap(<RobotsPage />));
+    const stopButton = await screen.findByLabelText("robot.action_stop");
+    fireEvent.click(stopButton);
+
+    await waitFor(() => {
+      expect(stopMutateMock).toHaveBeenCalledWith(
+        { id: "r2", closePosition: true },
+        expect.objectContaining({ onSuccess: expect.any(Function) })
+      );
+    });
+  });
+
+  it("暂停按钮：取消确认时不触发 pauseRobot.mutate", async () => {
+    confirmMock.mockResolvedValue(false);
+    render(wrap(<RobotsPage />));
+    const pauseButton = await screen.findByLabelText("robot.action_pause");
+    fireEvent.click(pauseButton);
+
+    await waitFor(() => expect(confirmMock).toHaveBeenCalledTimes(1));
+    expect(pauseMutateMock).not.toHaveBeenCalled();
+  });
+
+  it("暂停按钮：确认后触发 pauseRobot.mutate", async () => {
+    confirmMock.mockResolvedValue(true);
+    render(wrap(<RobotsPage />));
+    const pauseButton = await screen.findByLabelText("robot.action_pause");
+    fireEvent.click(pauseButton);
+
+    await waitFor(() => {
+      expect(pauseMutateMock).toHaveBeenCalledWith(
+        "r2",
+        expect.objectContaining({ onSuccess: expect.any(Function) })
+      );
+    });
   });
 });

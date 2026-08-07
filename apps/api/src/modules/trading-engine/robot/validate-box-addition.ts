@@ -1,4 +1,10 @@
-import { deriveBoxLines, validateBoxGeometry, type BoxGeometryConfig } from '@gridpilot/shared-types';
+import {
+  deriveBoxLines,
+  validateBoxGeometry,
+  minOrderSizeRequirement,
+  type BoxGeometryConfig,
+  type OrderSizeConstraints,
+} from '@gridpilot/shared-types';
 
 export interface BoxSpec {
   direction: string;
@@ -9,7 +15,12 @@ export interface BoxSpec {
   stopLossGridStep: number;
   isolationStep: number;
   activationPrice?: number;
+  mainGridPortionSize?: number;
 }
+
+/** 交易所最小下单量约束，供最小下单量预校验使用；获取失败时上游传 undefined/null 跳过该项。
+ * 复用 shared-types 的 OrderSizeConstraints，不再重复声明同形状接口。 */
+export type MarketConstraints = OrderSizeConstraints;
 
 export interface ValidationResult {
   valid: boolean;
@@ -37,6 +48,7 @@ export function validateBoxAddition(
   newBox: BoxSpec,
   existingBoxes: BoxSpec[],
   robotDirection: string,
+  marketConstraints?: MarketConstraints | null,
 ): ValidationResult {
   const errors: string[] = [];
 
@@ -51,8 +63,24 @@ export function validateBoxAddition(
     errors.push(...geomCheck.errors);
   }
 
-  // 3. 不重叠（边界相接不算）
   const nb = deriveBoxLines(toGeometry(newBox));
+
+  // 2.5 最小下单量：按箱体真实最低价（nb.boxLowPrice）折算名义价值，不用实时价，再按
+  // stepSize 向上取整（交易所下单会把数量向下截断到 stepSize 整数倍，不取整则用户填入的
+  // 值即便过了未取整的理论最小值，截断后名义价值仍可能跌破门槛）。见 minOrderSizeRequirement。
+  if (marketConstraints && newBox.mainGridPortionSize != null && newBox.mainGridPortionSize > 0) {
+    const portionSize = newBox.mainGridPortionSize;
+    const minRequired = minOrderSizeRequirement(nb.boxLowPrice, marketConstraints);
+    if (portionSize < minRequired) {
+      errors.push(
+        `order size ${portionSize} below exchange minimum at box low price ${nb.boxLowPrice} ` +
+          `(minQty=${marketConstraints.minQty}, minNotional=${marketConstraints.minNotional}, ` +
+          `stepSize=${marketConstraints.stepSize}, suggested>=${minRequired})`,
+      );
+    }
+  }
+
+  // 3. 不重叠（边界相接不算）
   for (const e of existingBoxes) {
     const eb = deriveBoxLines(toGeometry(e));
     const noOverlap = nb.boxHighPrice <= eb.boxLowPrice || eb.boxHighPrice <= nb.boxLowPrice;

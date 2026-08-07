@@ -29,13 +29,13 @@ Comparé au « buy and hold » : la stratégie d'achat-conservation ne génère 
 ## 🤔 Avant d'utiliser une grille, posez-vous d'abord ces cinq questions
 
 **Le prix chute encore — pourquoi votre grille s'empresse-t-elle de remplir la position au sommet ?**
-La grille native ouvre une position dès que le prix entre dans la fourchette. GridPilot pratique l'**ouverture par suivi** : il accompagne d'abord le point bas et n'entre qu'une fois le rebond de 0,2 % confirmé — ni achat du creux à l'aveugle, ni position coincée en haut.
+La grille native ouvre une position dès que le prix entre dans la fourchette. GridPilot pratique l'**ouverture par suivi** : il accompagne d'abord le point bas et n'entre qu'une fois le rebond de 0,2 % confirmé — ni achat du creux à l'aveugle, ni position coincée en haut. (Le suivi n'a lieu que lorsque le prix entre dans la fenêtre d'activation en allant vers la perte ; s'il remonte dans la fourchette depuis plus profond, en direction du take-profit, GridPilot saute le suivi et démarre directement.)
 
 **Le marché bouge à chaque seconde — pourquoi vos ordres restent-ils figés une fois posés ?**
-GridPilot redécide à chaque mise à jour du marché : il annule ce qui doit l'être, modifie ce qui doit l'être, et à tout instant le carnet peut ne contenir aucun ordre. Quand le prix est défavorable, il préfère refuser l'ordre plutôt que courir après le cours ; s'il peut passer en Maker (0,02 %), il ne paiera jamais le Taker (0,05 %) pour rien.
+GridPilot redécide à chaque mise à jour du marché : il annule ce qui doit l'être, modifie ce qui doit l'être, et à tout instant le carnet peut ne contenir aucun ordre. Quand le prix est favorable, il colle au carnet pour verrouiller le meilleur prix ; quand il est défavorable, il préfère déclencher le coupe-circuit et refuser l'ordre ; s'il peut passer en Maker (0,02 %), il ne paiera jamais le Taker (0,05 %) pour rien. Cette poursuite n'a aucun risque à la baisse : si le prix continue de baisser au-delà du prix de grille, GridPilot achète encore moins cher en le suivant ; s'il rebondit sans franchir la ligne du dessus, l'ordre reste exécutable au prix d'origine — selon un modèle standard de ruine du joueur (gambler's ruin), la probabilité de vraiment rater l'exécution est négligeable — le surprofit est gratuit, et le rater ne coûte rien.
 
 **Le prix bondit de 5–10 USDT d'un coup — à part regarder, que peut faire votre grille ?**
-Les ordres statiques n'encaissent que les prix figés des lignes de grille. Quand l'écart dépasse 2 fois les frais taker, GridPilot exécute activement au marché et empoche l'écart de saut au-delà du pas de grille — et les tests le montrent : plus le carnet d'un exchange est « rugueux », plus le surprofit est élevé.
+Les ordres statiques n'encaissent que les prix figés des lignes de grille. Quand le prix s'écarte du prix théorique de la grille au-delà d'un seuil (0,1 % par défaut, soit ≈ 2× les frais taker, ajustable), GridPilot exécute activement en taker et empoche l'écart de saut au-delà du pas de grille — et les tests le montrent : plus le carnet d'un exchange est « rugueux », plus le surprofit est élevé.
 
 **Une simple cassure éclair — pourquoi liquider toute la position d'un seul coup au marché ?**
 Tout clôturer en un clic, c'est payer les frais Taker et renoncer au rebond. GridPilot **réduit la position palier par palier en ordres limites** dans la zone tampon du stop-loss ; si le prix rebondit, la position résiduelle continue directement de gagner. Ce n'est qu'en franchissant la ligne de liquidation qu'un dernier ordre conditionnel de secours prend le relais en une fois.
@@ -48,8 +48,8 @@ GridPilot préconfigure plusieurs fourchettes non chevauchantes : celle dans laq
 | Dimension | Grille native de l'exchange | GridPilot |
 |------|----------------|-----------|
 | **Mode de décision** | Ordres statiques posés par lots, qui ne bougent plus une fois placés | Surveillance automatisée : à chaque mise à jour du marché, nouvelle évaluation avant de passer/modifier/annuler dynamiquement un ordre ; à tout instant, il peut n'y avoir aucun ordre en attente |
-| **Qualité d'exécution** | Les ordres statiques n'encaissent que le prix des lignes de grille ; le surprofit des sauts de prix passe à côté | Se cale sur le meilleur bid/ask ; quand l'écart dépasse 2× les frais, exécute activement en taker pour verrouiller le surprofit ; refuse l'ordre quand le prix est défavorable |
-| **Moment d'ouverture** | Ouverture immédiate à l'entrée dans la fourchette | Ouverture par suivi : accompagne le point bas et n'ouvre qu'après confirmation d'un rebond de 0,2 % |
+| **Qualité d'exécution** | Les ordres statiques n'encaissent que le prix des lignes de grille ; le surprofit des sauts de prix passe à côté | Se cale sur le carnet pour verrouiller le meilleur prix, sans jamais exécuter moins bien que le prix théorique ; quand le prix s'écarte du prix théorique au-delà du seuil (≈ 2× les frais par défaut), exécute activement en taker pour verrouiller le surprofit ; coupe-circuit et refus de l'ordre quand le prix est défavorable |
+| **Moment d'ouverture** | Ouverture immédiate à l'entrée dans la fourchette | Ouverture par suivi : lorsque le prix entre en allant vers la perte, il accompagne le point bas et n'ouvre qu'après confirmation d'un rebond (0,2 % par défaut) |
 | **Stop-loss** | Liquidation totale au marché en une seule fois à un seul prix | Réduction palier par palier en ordres limites dans la zone tampon ; en cas de rebond, la position résiduelle en profite directement ; un ordre conditionnel de secours reste en veille sur la ligne de liquidation |
 | **Adaptation au marché** | Fourchette unique fixe | Plusieurs fourchettes non chevauchantes : celle dans laquelle entre le prix s'active, les autres restent en veille |
 
@@ -65,7 +65,7 @@ GridPilot préconfigure plusieurs fourchettes non chevauchantes : celle dans laq
 
 ## 💰 Comprendre les frais et économiser à l'inscription avec un code de parrainage (sponsor rebateto.me)
 
-Les frais sont prélevés par l'exchange, **GridPilot n'en prend pas un centime**. Pour une même transaction, l'ordre passif (Maker) ≈0,02 %, l'ordre actif (Taker) ≈0,05 %. Sous l'effet de levier et d'une grille à haute fréquence, les frais sont discrètement amplifiés et, jour après jour, ce n'est pas négligeable — GridPilot place par défaut des ordres Maker pour vous, économisant environ 0,03 % par ordre, et n'exécute en taker que lorsque l'opportunité est fugace.
+Les frais sont prélevés par l'exchange, **GridPilot n'en prend pas un centime**. Pour une même transaction, l'ordre passif (Maker) ≈0,02 %, l'ordre actif (Taker) ≈0,05 %. Les ordres de grille du quotidien passent en Maker (ordres passifs) des deux côtés : sur les exécutions courantes de la grille, il n'y a aucune différence de frais avec la grille native de l'exchange. L'avantage de GridPilot sur les frais se joue à trois moments clés — ① à l'entrée : il attend la confirmation du rebond pour entrer en ordre passif, au lieu d'ouvrir immédiatement au marché dès l'entrée dans la fourchette ; ② au stop-loss : il réduit palier par palier en ordres limites, au lieu de tout liquider au marché en un clic ; ③ à l'exécution en taker : il ne s'autorise le Taker que lorsque l'écart excédentaire couvre réellement les frais.
 
 Pour aller plus loin : **en renseignant un code de rétrocession lors de l'inscription à l'exchange, vous pouvez vous faire restituer durablement environ 20 % des frais déjà payés (Gate 40 %), crédités automatiquement** — c'est comme une remise supplémentaire sur chaque transaction.
 
@@ -133,20 +133,22 @@ pnpm dev:skip-infra   # API + Web, sans docker
 ## 🕹️ Mode d'emploi
 
 1. **Connecter l'exchange** : renseignez l'API Key/Secret dans les paramètres. **N'accordez que la permission de trading de contrats, n'activez jamais la permission de retrait.**
-2. **Configurer la grille** : choisissez la paire de trading et la fourchette de prix, définissez le nombre de cellules de la grille principale, le pas, la quantité par cellule, le levier, le tampon de stop-loss et les paramètres d'ouverture par suivi.
+2. **Configurer la grille** : choisissez la paire de trading et la direction (long / short), définissez le prix d'ancrage du take-profit, le nombre de cellules de la grille principale / le pas, la quantité par cellule, le levier, le tampon de stop-loss et les paramètres d'ouverture par suivi (les bornes de la boîte sont déduites automatiquement du prix d'ancrage du take-profit et du nombre de cellules / pas).
 3. **Lancer le robot** : passez en ouverture par suivi → exécution ; le frontend affiche en temps réel le marché, les ordres en attente, les exécutions et la machine à états.
-4. **Surveiller et clôturer** : le déclenchement du take-profit arrête l'ajout de positions et clôture ; le déclenchement du tampon de stop-loss réduit la position par couches.
+4. **Surveiller et clôturer** : quand le prix atteint le côté take-profit, la grille clôt naturellement en se liquidant palier par palier, puis sort en take-profit une fois la position ramenée à zéro ; en cas d'entrée dans la zone tampon du stop-loss, la position est réduite dynamiquement palier par palier.
 
 Paramètres clés :
 
 | Paramètre | Description |
 |------|------|
 | `takeProfitPrice` | Prix de take-profit (limite du côté take-profit de la boîte) |
+| `direction` | Direction : LONG (long) / SHORT (short) |
 | `mainGridCount` / `mainGridStep` | Nombre de cellules de la grille principale / pas par cellule (USDT) |
 | `mainGridPortionSize` | Quantité d'ordre par cellule |
 | `leverage` | Multiplicateur de levier |
 | `stopLossGridCount` / `stopLossGridStep` | Nombre de cellules / pas de la zone tampon de stop-loss |
-| `activationPrice` / `trailingCallbackRate` | Prix d'activation / taux de rappel de l'ouverture par suivi |
+| `isolationStep` | Largeur de la bande d'isolation (par défaut = pas de la zone de stop-loss) |
+| `activationPrice` / `trailingCallbackRate` | Prix d'activation de la fourchette (par défaut, le point médian de la grille principale) / taux de rappel de l'ouverture par suivi |
 | `excessProfitMultiplier` | Multiplicateur de déclenchement de la zone GTC (seuil de surprofit) |
 
 Voir tous les paramètres dans [`docs/STRATEGY_SPEC.md`](docs/STRATEGY_SPEC.md).

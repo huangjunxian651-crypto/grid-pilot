@@ -7,6 +7,7 @@ import { useLang } from "@/lib/i18n-context";
 import { predictActions } from "@gridpilot/shared-types";
 import {
   type BoxFormValue,
+  type MarketConstraints,
   boxFormPreviewLayout,
   boxFormErrors,
 } from "./box-form-model";
@@ -16,17 +17,22 @@ export function BoxForm({
   onChange,
   direction,
   price,
+  marketConstraints,
 }: {
   value: BoxFormValue;
   onChange: (v: BoxFormValue) => void;
   direction: "LONG" | "SHORT";
   price: number;
+  marketConstraints?: MarketConstraints | null;
 }) {
   const { t } = useLang();
   const set = (patch: Partial<BoxFormValue>) => onChange({ ...value, ...patch });
 
   const layout = useMemo(() => boxFormPreviewLayout(value, direction), [value, direction]);
-  const errs = useMemo(() => boxFormErrors(value, direction), [value, direction]);
+  const errs = useMemo(
+    () => boxFormErrors(value, direction, marketConstraints),
+    [value, direction, marketConstraints],
+  );
 
   const previewPrice = price > 0
     ? price
@@ -72,7 +78,10 @@ export function BoxForm({
           <Field label={t("robot.field_take_profit")} value={value.takeProfitPrice} onChange={(x) => set({ takeProfitPrice: x })} placeholder="2800" />
           <Field label={t("robot.field_grid_count")} value={value.mainGridCount} onChange={(x) => set({ mainGridCount: x })} placeholder="200" />
           <Field label={t("robot.field_grid_step")} value={value.mainGridStep} onChange={(x) => set({ mainGridStep: x })} placeholder="2" />
-          <Field label={t("robot.field_portion")} value={value.mainGridPortionSize} onChange={(x) => set({ mainGridPortionSize: x })} placeholder="0.05" />
+          <div>
+            <Field label={t("robot.field_portion")} value={value.mainGridPortionSize} onChange={(x) => set({ mainGridPortionSize: x })} placeholder="0.05" />
+            {layout && errs.orderSize && <div style={{ fontSize: 11, color: "var(--down)", marginTop: 4 }}>{t(errs.orderSize.key, errs.orderSize.params)}</div>}
+          </div>
           <Field label={t("robot.cfg_leverage")} value={value.leverage} onChange={(x) => set({ leverage: x })} placeholder="20" />
           <Field label={t("robot.field_sl_count")} value={value.stopLossGridCount} onChange={(x) => set({ stopLossGridCount: x })} placeholder="4" />
           <Field label={t("robot.field_sl_step")} value={value.stopLossGridStep} onChange={(x) => set({ stopLossGridStep: x })} placeholder="2" />

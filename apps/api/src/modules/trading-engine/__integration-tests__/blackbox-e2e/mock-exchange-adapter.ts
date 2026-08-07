@@ -478,5 +478,9 @@ export class MockExchangeAdapter implements ExchangeAdapter {
 
   async setMarginMode(_symbol: string, _crossMargin: boolean): Promise<void> {}
 
+  /** 模拟账户恒为单向持仓（全部下单路径的既有假设），启动时无需切换。 */
+  async getPositionMode(): Promise<boolean> { return true; }
+  async setPositionMode(_oneWay: boolean): Promise<void> {}
+
   async getMyTrades(_symbol: string, _sinceMs: number) { return []; }
 }

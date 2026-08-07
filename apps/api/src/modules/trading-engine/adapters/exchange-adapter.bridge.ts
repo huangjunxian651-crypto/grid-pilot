@@ -248,6 +248,14 @@ export class ExchangeAdapterBridge implements ExchangeAdapter {
     await this.adapter.setMarginMode(symbol, crossMargin);
   }
 
+  async getPositionMode(): Promise<boolean> {
+    return this.adapter.getPositionMode();
+  }
+
+  async setPositionMode(oneWay: boolean): Promise<void> {
+    await this.adapter.setPositionMode(oneWay);
+  }
+
   async getMyTrades(symbol: string, sinceMs: number): Promise<Array<FillEvent & { clientOrderId?: string; side?: 'BUY' | 'SELL' }>> {
     if (!this.adapter.fetchMyTrades) return [];
     const trades = await this.adapter.fetchMyTrades(symbol, sinceMs);

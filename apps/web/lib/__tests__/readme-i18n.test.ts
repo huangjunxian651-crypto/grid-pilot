@@ -15,7 +15,7 @@ describe("README.md 简体中文主稿契约", () => {
   it("包含九大章节锚点", () => {
     for (const heading of [
       "为什么是网格交易",
-      "5 大创新",
+      "用网格之前",
       "功能概览",
       "手续费",
       "安装",
@@ -42,6 +42,6 @@ describe("README.md 简体中文主稿契约", () => {
 
   it("含风险免责与 Docker 一键命令", () => {
     expect(md).toMatch(/风险|免责/);
-    expect(md).toContain("docker compose --profile full up");
+    expect(md).toContain("docker compose up --build -d");
   });
 });

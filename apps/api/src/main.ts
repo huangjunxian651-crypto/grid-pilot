@@ -17,7 +17,7 @@ function loadRootEnv(): void {
     if (parent === dir) break;
     dir = parent;
   }
-  // 容器化部署（docker compose --profile full）不挂载 .env 文件，配置经 env_file/environment
+  // 容器化部署（docker compose up）不挂载 .env 文件，配置经 env_file/environment
   // 直接注入到 process.env。此时关键变量已存在即视为已配置，无需磁盘 .env 文件。
   if (process.env.DATABASE_URL && process.env.ENCRYPTION_KEY) {
     return;

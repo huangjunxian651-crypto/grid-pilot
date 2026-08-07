@@ -29,13 +29,13 @@ Comparado con "comprar y mantener": comprar y mantener solo genera ganancias cua
 ## 🤔 Antes de usar una cuadrícula, hazte estas cinco preguntas
 
 **El precio sigue cayendo: ¿por qué tu cuadrícula tiene tanta prisa por llenar la posición en plena cima?**
-La cuadrícula nativa abre posición en cuanto el precio entra en el rango. GridPilot **abre por seguimiento**: primero persigue el punto bajo y solo entra tras confirmar un rebote del 0,2 % — ni compra la caída a ciegas ni se queda colgado arriba.
+La cuadrícula nativa abre posición en cuanto el precio entra en el rango. GridPilot **abre por seguimiento**: primero persigue el punto bajo y solo entra tras confirmar un rebote del 0,2 % (valor por defecto, ajustable) — ni compra la caída a ciegas ni se queda colgado arriba. (El seguimiento solo se aplica cuando el precio entra en la ventana de activación en dirección de pérdida; si el precio vuelve a subir al rango desde un nivel más profundo en dirección al take-profit, se omite el seguimiento y el bot arranca directamente.)
 
 **El mercado cambia cada segundo: ¿por qué tus órdenes no se mueven una vez colocadas?**
-GridPilot vuelve a decidir con cada actualización del mercado: cancela lo que hay que cancelar, modifica lo que hay que modificar, y en cualquier momento puede no haber ni una sola orden en el libro; si el precio no conviene, prefiere rechazar la orden antes que perseguir el precio — si puede ser Maker (0,02 %), jamás regala el Taker (0,05 %).
+GridPilot vuelve a decidir con cada actualización del mercado: cancela lo que hay que cancelar, modifica lo que hay que modificar, y en cualquier momento puede no haber ni una sola orden en el libro; si el precio conviene, persigue el libro para clavar el mejor precio, y si no conviene, prefiere activar el fusible y rechazar la orden — si puede ser Maker (0,02 %), jamás regala el Taker (0,05 %). Esta persecución no tiene ningún riesgo a la baja: si el precio sigue cayendo más allá del precio de la cuadrícula, el bot lo persigue y compra aún más barato; si rebota sin romper la línea superior, la orden aún puede ejecutarse al precio original — según un modelo estándar de ruina del jugador (gambler's ruin), la probabilidad de perder realmente la ejecución es insignificante — la ganancia extra es gratis, y perderla no cuesta nada.
 
 **El precio salta 5–10 USDT de golpe: ¿tu cuadrícula se queda mirando o hace algo?**
-Las órdenes estáticas solo capturan los precios muertos de las líneas de cuadrícula. Cuando el diferencial supera 2 veces la comisión Taker, GridPilot ejecuta activamente a mercado y se embolsa el diferencial del salto que excede el paso de la cuadrícula — las pruebas demuestran que cuanto más "irregular" es el libro de órdenes de un exchange, mayor es la ganancia extra.
+Las órdenes estáticas solo capturan los precios muertos de las líneas de cuadrícula. Cuando el precio se desvía del precio teórico de la cuadrícula más allá de un umbral (por defecto 0,1 % ≈ 2× la comisión Taker, ajustable), GridPilot ejecuta activamente a mercado y se embolsa el diferencial del salto que excede el paso de la cuadrícula — las pruebas demuestran que cuanto más "irregular" es el libro de órdenes de un exchange, mayor es la ganancia extra.
 
 **Es solo una ruptura breve a la baja: ¿por qué liquidar toda la posición de golpe a mercado?**
 Un cierre total de un clic paga comisión Taker y, encima, renuncia al rebote. GridPilot **reduce la posición nivel a nivel con órdenes límite** dentro de la zona de amortiguación del stop-loss; si el precio rebota, la posición residual sigue ganando directamente. Solo cuando se rompe la línea de liquidación, la última orden condicional de respaldo toma el control de una vez.
@@ -48,8 +48,8 @@ GridPilot preconfigura varios rangos que no se superponen: se activa el rango en
 | Dimensión | Cuadrícula nativa del exchange | GridPilot |
 |------|----------------|-----------|
 | **Forma de decidir** | Órdenes estáticas en lote, inmóviles una vez colocadas | Vigilancia automatizada: reevalúa con cada actualización del mercado antes de colocar/modificar/cancelar dinámicamente; en cualquier momento puede no haber órdenes colgadas |
-| **Calidad de ejecución** | Las órdenes estáticas solo capturan el precio de las líneas de cuadrícula; el diferencial extra de los saltos se escapa | Persigue el mejor bid/ask para clavar el mejor precio; cuando el diferencial supera 2× la comisión, ejecuta activamente para bloquear la ganancia extra; si el precio no conviene, rechaza la orden |
-| **Momento de apertura** | Abre posición en cuanto entra en el rango | Apertura por seguimiento: persigue el punto bajo y solo abre tras confirmar un rebote del 0,2 % |
+| **Calidad de ejecución** | Las órdenes estáticas solo capturan el precio de las líneas de cuadrícula; el diferencial extra de los saltos se escapa | Anclado al libro para clavar el mejor precio, con un precio de ejecución nunca peor que el precio teórico; cuando el precio se desvía del precio teórico más allá del umbral (por defecto ≈2× la comisión), ejecuta activamente para bloquear la ganancia extra; si el precio no conviene, activa el fusible y rechaza la orden |
+| **Momento de apertura** | Abre posición en cuanto entra en el rango | Apertura por seguimiento: al entrar en dirección de pérdida, persigue el punto bajo y solo abre tras confirmar un rebote (0,2 % por defecto) |
 | **Stop-loss** | Cierre total a mercado en un solo precio | Reducción nivel a nivel con órdenes límite en la zona de amortiguación; si rebota, la posición residual se beneficia directamente; la línea de liquidación guarda una orden condicional de respaldo |
 | **Adaptación al mercado** | Un único rango fijo | Varios rangos no superpuestos: se activa el rango en el que entra el precio y los demás quedan inactivos |
 
@@ -65,7 +65,7 @@ GridPilot preconfigura varios rangos que no se superponen: se activa el rango en
 
 ## 💰 Entiende las comisiones y ahorra usando un código de invitación al registrarte (patrocinador rebateto.me)
 
-Las comisiones las cobra el exchange; **GridPilot no se queda ni un céntimo**. En una misma operación, una orden Maker cuesta ≈0,02 % y una orden Taker ≈0,05 %. Con apalancamiento y cuadrículas de alta frecuencia, las comisiones se amplifican silenciosamente y, acumuladas con el tiempo, no son pequeñas; GridPilot coloca órdenes Maker por ti por defecto, ahorrando unos 0,03 % por operación, y solo ejecuta como Taker cuando la oportunidad es fugaz.
+Las comisiones las cobra el exchange; **GridPilot no se queda ni un céntimo**. En una misma operación, una orden Maker cuesta ≈0,02 % y una orden Taker ≈0,05 %. Las órdenes de cuadrícula cotidianas de la cuadrícula nativa del exchange también se ejecutan como Maker (órdenes límite colgadas), así que en las ejecuciones de cuadrícula del día a día no hay diferencia de comisiones entre ambos; la ventaja de comisiones de GridPilot aparece en tres momentos clave: ① al entrar, espera la confirmación del rebote y entra con orden límite, en lugar de abrir a mercado en cuanto el precio entra en el rango; ② en el stop-loss, reduce nivel a nivel con órdenes límite, en lugar de cerrar toda la posición a mercado de un clic; ③ solo se permite ejecutar como Taker cuando el diferencial extra realmente cubre la comisión.
 
 Y un paso más allá: **al registrarte en un exchange, basta con introducir un código de reembolso para que se te devuelva a largo plazo alrededor del 20 % de las comisiones ya pagadas (40 % en Gate), de forma automática**, lo que equivale a un descuento adicional en cada operación.
 
@@ -133,20 +133,22 @@ pnpm dev:skip-infra   # API + Web, omitiendo docker
 ## 🕹️ Instrucciones de uso
 
 1. **Conecta el exchange**: introduce la API Key/Secret en los ajustes. **Concede únicamente permiso de trading de contratos; nunca habilites el permiso de retiro.**
-2. **Configura la cuadrícula**: elige el par de trading y el rango de precios, y define el número de niveles de la cuadrícula principal, el paso, la cantidad por nivel, el apalancamiento, el amortiguador de stop-loss y los parámetros de apertura por seguimiento.
+2. **Configura la cuadrícula**: elige el par de trading y la dirección (largo/corto), y define el precio ancla de take-profit, el número de niveles/paso de la cuadrícula principal, la cantidad por nivel, el apalancamiento, el amortiguador de stop-loss y los parámetros de apertura por seguimiento (los límites del rango se derivan automáticamente del ancla de take-profit + el número de niveles y el paso).
 3. **Inicia el bot**: entra en la apertura por seguimiento → en ejecución; el frontend muestra en tiempo real el mercado, las órdenes, las ejecuciones y la máquina de estados.
-4. **Monitorea y cierra**: al activarse el take-profit, se detiene la acumulación y se cierra; al activarse el amortiguador de stop-loss, se reduce la posición de forma escalonada.
+4. **Monitorea y cierra**: cuando el precio llega al extremo de take-profit, la cuadrícula cierra nivel a nivel y finaliza de forma natural; con la posición a cero, el bot sale con take-profit; si el precio cae en la zona de amortiguación de stop-loss, reduce la posición de forma dinámica nivel a nivel.
 
 Parámetros clave:
 
 | Parámetro | Descripción |
 |------|------|
 | `takeProfitPrice` | Precio de take-profit (límite superior del rango de take-profit) |
+| `direction` | Dirección: LONG (largo) / SHORT (corto) |
 | `mainGridCount` / `mainGridStep` | Número de niveles de la cuadrícula principal / paso por nivel (USDT) |
 | `mainGridPortionSize` | Cantidad de orden por nivel |
 | `leverage` | Multiplicador de apalancamiento |
 | `stopLossGridCount` / `stopLossGridStep` | Número de niveles / paso de la zona de amortiguación de stop-loss |
-| `activationPrice` / `trailingCallbackRate` | Precio de activación de la apertura por seguimiento / amplitud de retroceso |
+| `isolationStep` | Anchura de la banda de aislamiento (por defecto = paso de la zona de stop-loss) |
+| `activationPrice` / `trailingCallbackRate` | Precio de activación del rango (por defecto, el punto medio de la cuadrícula principal; determina cuándo se activa el bot) / amplitud de retroceso de la apertura por seguimiento |
 | `excessProfitMultiplier` | Multiplicador de activación de la zona GTC (umbral de ganancia adicional) |
 
 Consulta todos los parámetros en [`docs/STRATEGY_SPEC.md`](docs/STRATEGY_SPEC.md).

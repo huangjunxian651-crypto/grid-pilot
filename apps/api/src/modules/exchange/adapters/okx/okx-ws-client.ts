@@ -5,7 +5,7 @@
 
 import { createHmac } from "crypto";
 import { ReconnectingWsClient } from "../shared/reconnecting-ws-client";
-import { OKX_WS_PRIVATE, OkxCredentials } from "./okx.types";
+import { OkxCredentials } from "./okx.types";
 
 interface WsMessage {
   event?: string;
@@ -20,12 +20,14 @@ interface WsMessage {
 export class OkxWsClient extends ReconnectingWsClient {
   private credentials: OkxCredentials;
   private url: string;
+  private isPrivate: boolean;
   private subscriptions: Array<{ channel: string; instType?: string; instId?: string }> = [];
 
-  constructor(credentials: OkxCredentials, url?: string) {
+  constructor(credentials: OkxCredentials, url: string, isPrivate: boolean) {
     super("OkxWsClient");
     this.credentials = credentials;
-    this.url = url ?? OKX_WS_PRIVATE;
+    this.url = url;
+    this.isPrivate = isPrivate;
   }
 
   protected buildConnectUrl(): string {
@@ -34,7 +36,7 @@ export class OkxWsClient extends ReconnectingWsClient {
 
   protected async afterSocketOpen(): Promise<void> {
     // Only login for private WebSocket; public WS does not require auth
-    if (this.url === OKX_WS_PRIVATE) {
+    if (this.isPrivate) {
       await this.login();
     }
     this.startPing();

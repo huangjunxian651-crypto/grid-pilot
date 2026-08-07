@@ -17,3 +17,15 @@ export function resolveNotificationBody(n: Notification, t: Translate): string {
   const text = t(bodyKey, { ...n.params, reason: reasonText });
   return text === bodyKey ? n.body : text;
 }
+
+/**
+ * 通知标题渲染：code → notifications.title.<code>；未命中（旧数据/新 code）回退后端原始
+ * title —— 后端目前仍硬编码英文 title 字段（trading-engine.service.ts /
+ * critical-event-notification.ts），直接展示会在中文界面里混入英文，故短标题走前端翻译层。
+ */
+export function resolveNotificationTitle(n: Notification, t: Translate): string {
+  if (!n.code) return n.title;
+  const titleKey = `notifications.title.${n.code}`;
+  const text = t(titleKey);
+  return text === titleKey ? n.title : text;
+}
