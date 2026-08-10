@@ -921,6 +921,50 @@ export class TradingEngineService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /** 无活跃 runner 时的兜底平仓：不依赖 runner/run 记录，直接建 adapter 查真实持仓，
+   * 非零则市价平仓，失败则告警。修复根因：activeBoxId 为空（如箱体已 detach 但未重新
+   * 激活）时 requestStop() 拿不到 runCode，此前直接跳过整个平仓分支——交易所裸留仓位
+   * 且不告警（2026-08-07 生产事故：三台机器人点停止后仓位仍在交易所裸奔超过 10 小时）。
+   * label 仅用于日志/告警文案（此处传 robotId，因为没有 runCode 可用）。 */
+  async closeResidualPosition(
+    label: string,
+    credentialId: string,
+    symbol: string,
+  ): Promise<{ residualRemains: boolean }> {
+    const credential = await this.credentialService.findOneWithSecrets(credentialId);
+    if (!credential) return { residualRemains: false };
+    const legacyAdapter = this.adapterFactory.createAdapter({
+      exchangeId: credential.exchangeId,
+      accountId: credential.accountId,
+      apiKey: credential.apiKey,
+      apiSecret: credential.apiSecret,
+      passphrase: credential.passphrase ?? undefined,
+      environment: credential.environment as "demo" | "live",
+    });
+    const adapter = new ExchangeAdapterBridge(legacyAdapter);
+    const timeout = TradingEngineService.FORCE_CLOSE_TIMEOUT_MS;
+
+    let pos: Awaited<ReturnType<ExchangeAdapter['getPosition']>>;
+    try {
+      pos = await this.withTimeout(adapter.getPosition(symbol), timeout, `${label} no-runner getPosition`);
+    } catch (err) {
+      this.logger.warn(`[${label}] no-runner position check failed: ${(err as Error).message}`);
+      return { residualRemains: false };
+    }
+    if (!pos || Math.abs(pos.baseAssetQty) <= 1e-12) return { residualRemains: false };
+
+    const side = pos.baseAssetQty > 0 ? 'LONG' : 'SHORT';
+    this.logger.error(`[${label}] Exchange holds ${pos.baseAssetQty} ${symbol} with no active runner — force closing`);
+    try {
+      await this.withTimeout(adapter.closePosition(symbol, side), timeout, `${label} no-runner closePosition`);
+      return { residualRemains: false };
+    } catch (err) {
+      this.logger.error(`[${label}] no-runner force-close FAILED, position may remain on exchange: ${(err as Error).message}`);
+      await this.notifyResidualPositionRisk(label, symbol, pos.baseAssetQty, (err as Error).message);
+      return { residualRemains: true };
+    }
+  }
+
   private async evictRunnersOnSymbol(
     symbol: string,
     credentialId: string,

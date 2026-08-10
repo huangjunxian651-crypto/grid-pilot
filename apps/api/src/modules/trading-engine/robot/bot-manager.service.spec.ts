@@ -38,6 +38,7 @@ function makeService() {
   const captureStopSnapshot = vi.fn().mockResolvedValue(null);
   const assertSymbolTradable = vi.fn().mockResolvedValue(undefined);
   const getMarketConstraints = vi.fn().mockResolvedValue(null);
+  const closeResidualPosition = vi.fn().mockResolvedValue({ residualRemains: false });
 
   let emit: ((price: number) => void) | null = null;
   let stopped = false;
@@ -53,10 +54,10 @@ function makeService() {
     getBoxesLedger: vi.fn().mockResolvedValue(new Map()),
   };
 
-  const launcher = { startBot, stopBot, detachBot, pauseBot, captureStopSnapshot, assertSymbolTradable, getMarketConstraints, setOnBoxTerminated: vi.fn() };
+  const launcher = { startBot, stopBot, detachBot, pauseBot, captureStopSnapshot, assertSymbolTradable, getMarketConstraints, closeResidualPosition, setOnBoxTerminated: vi.fn() };
   const svc = new BotManagerService(prisma as any, launcher as any, tickerSource as any, accountSnapshot as any, notification as any, pnlLedger as any);
   return {
-    svc, prisma, robotUpdate, boxFindMany, startBot, stopBot, detachBot, pauseBot, captureStopSnapshot, assertSymbolTradable, getMarketConstraints, launcher, subscribe, notification, accountSnapshot, pnlLedger,
+    svc, prisma, robotUpdate, boxFindMany, startBot, stopBot, detachBot, pauseBot, captureStopSnapshot, assertSymbolTradable, getMarketConstraints, closeResidualPosition, launcher, subscribe, notification, accountSnapshot, pnlLedger,
     pushPrice: (p: number) => emit?.(p),
     isStopped: () => stopped,
   };
@@ -1320,22 +1321,66 @@ describe('BotManagerService', () => {
       }));
     });
 
-    it('活跃箱:detach 旧 session(保仓)+ activeBoxId 置 null + update', async () => {
-      const { svc, prisma, detachBot } = makeService();
-      ((prisma as any).robot).findUnique = vi.fn().mockResolvedValue({ id: 'robot-1', direction: 'LONG', activeBoxId: 'box-1' });
+    it('活跃箱(RUNNING 且有 scheduler):detach 旧 session(保仓)后必须用新参数立即重新激活，且必须同步告知 scheduler（否则下个 tick 会把刚重挂的止损/网格单再撤一遍——2026-08-08 code review 发现：markActive 缺失会让本次修复本身复现同类事故）', async () => {
+      const { svc, prisma, detachBot, startBot } = makeService();
+      ((prisma as any).robot).findUnique = vi.fn().mockResolvedValue({ id: 'robot-1', direction: 'LONG', activeBoxId: 'box-1', symbol: 'ETH/USDT', accountId: 'cred-1', status: 'RUNNING' });
       (prisma.box as any).findFirst = vi.fn().mockResolvedValue({ id: 'box-1', robotId: 'robot-1', direction: 'LONG', deletedAt: null });
       (prisma.box as any).findMany = vi.fn().mockResolvedValue([]);
       (prisma.box as any).update = vi.fn().mockResolvedValue({ id: 'box-1' });
-      (prisma as any).run = { findFirst: vi.fn().mockResolvedValue({ runCode: 'S_OLD' }) };
+      (prisma as any).run = { findFirst: vi.fn().mockResolvedValue({ runCode: 'S_OLD' }), updateMany: vi.fn().mockResolvedValue({ count: 0 }) };
       ((prisma as any).robot).update = vi.fn().mockResolvedValue({});
       (svc as any).activeSessionCode.set('robot-1', 'S_OLD');
+      const scheduler = { markActive: vi.fn(), onBoxTerminated: vi.fn(), onTick: vi.fn(), activeBox: null };
+      (svc as any).schedulers.set('robot-1', scheduler);
 
       await svc.editBox('robot-1', 'box-1', editInput);
 
       expect(detachBot).toHaveBeenCalledWith('S_OLD');
-      expect(((prisma as any).robot).update).toHaveBeenCalledWith({ where: { id: 'robot-1' }, data: { activeBoxId: null } });
-      expect((svc as any).activeSessionCode.get('robot-1')).toBeUndefined();
+      expect(detachBot).toHaveBeenCalledTimes(1);
       expect((prisma.box as any).update).toHaveBeenCalled();
+      // 重新激活：新开一个 run（新参数已经写入 DB，startBot 会读到），activeBoxId 最终应指回该箱体
+      expect(startBot).toHaveBeenCalledWith('box-1', expect.any(String), 'RUNNING');
+      const robotUpdateCalls = (((prisma as any).robot).update as any).mock.calls.map((c: any[]) => c[0]);
+      expect(robotUpdateCalls.at(-1)).toEqual({ where: { id: 'robot-1' }, data: { activeBoxId: 'box-1' } });
+      expect((svc as any).activeSessionCode.get('robot-1')).toBe(startBot.mock.calls[0][1]);
+      // scheduler 必须同步获知新的活跃箱，否则下个价格 tick 会认为"无活跃箱"重新触发激活决策
+      expect(scheduler.markActive).toHaveBeenCalledWith('box-1');
+    });
+
+    it('活跃箱但机器人不是 RUNNING（如 PAUSED）:只 detach 不重新激活——不能让编辑箱体在暂停态偷偷启动真实交易（2026-08-08 code review 发现）', async () => {
+      const { svc, prisma, detachBot, startBot } = makeService();
+      ((prisma as any).robot).findUnique = vi.fn().mockResolvedValue({ id: 'robot-1', direction: 'LONG', activeBoxId: 'box-1', symbol: 'ETH/USDT', accountId: 'cred-1', status: 'PAUSED' });
+      (prisma.box as any).findFirst = vi.fn().mockResolvedValue({ id: 'box-1', robotId: 'robot-1', direction: 'LONG', deletedAt: null });
+      (prisma.box as any).findMany = vi.fn().mockResolvedValue([]);
+      (prisma.box as any).update = vi.fn().mockResolvedValue({ id: 'box-1' });
+      (prisma as any).run = { findFirst: vi.fn().mockResolvedValue({ runCode: 'S_OLD' }), updateMany: vi.fn().mockResolvedValue({ count: 0 }) };
+      ((prisma as any).robot).update = vi.fn().mockResolvedValue({});
+      (svc as any).activeSessionCode.set('robot-1', 'S_OLD');
+      const scheduler = { markActive: vi.fn(), onBoxTerminated: vi.fn(), onTick: vi.fn(), activeBox: null };
+      (svc as any).schedulers.set('robot-1', scheduler);
+
+      await svc.editBox('robot-1', 'box-1', editInput);
+
+      expect(detachBot).toHaveBeenCalledWith('S_OLD');
+      expect(startBot).not.toHaveBeenCalled();
+      expect(scheduler.markActive).not.toHaveBeenCalled();
+    });
+
+    it('活跃箱且 RUNNING 但 scheduler 已不存在(如正在 STOPPING):只 detach 不重新激活——没有 scheduler 意味着没人在管这个机器人，不能凭空启动 runner（2026-08-08 code review 发现）', async () => {
+      const { svc, prisma, detachBot, startBot } = makeService();
+      ((prisma as any).robot).findUnique = vi.fn().mockResolvedValue({ id: 'robot-1', direction: 'LONG', activeBoxId: 'box-1', symbol: 'ETH/USDT', accountId: 'cred-1', status: 'RUNNING' });
+      (prisma.box as any).findFirst = vi.fn().mockResolvedValue({ id: 'box-1', robotId: 'robot-1', direction: 'LONG', deletedAt: null });
+      (prisma.box as any).findMany = vi.fn().mockResolvedValue([]);
+      (prisma.box as any).update = vi.fn().mockResolvedValue({ id: 'box-1' });
+      (prisma as any).run = { findFirst: vi.fn().mockResolvedValue({ runCode: 'S_OLD' }), updateMany: vi.fn().mockResolvedValue({ count: 0 }) };
+      ((prisma as any).robot).update = vi.fn().mockResolvedValue({});
+      (svc as any).activeSessionCode.set('robot-1', 'S_OLD');
+      // 故意不注册 scheduler（模拟 requestStop 已经把它删掉的窗口期）
+
+      await svc.editBox('robot-1', 'box-1', editInput);
+
+      expect(detachBot).toHaveBeenCalledWith('S_OLD');
+      expect(startBot).not.toHaveBeenCalled();
     });
 
     it('校验只对比其他箱(findMany 用 id:{not} 排除自己)', async () => {
@@ -1629,7 +1674,10 @@ describe('箱体刷新 single-flight：慢查询期间并发 tick 不得踩踏�
       const { svc, prisma, robotUpdate, stopBot, captureStopSnapshot } = makeService();
       prisma.run.findFirst.mockResolvedValue({ id: 'run-1', runCode: 'sc-1' });
       stopBot.mockResolvedValue({ liquidationTimedOut: false, residualRemains: false });
-      captureStopSnapshot.mockResolvedValue({ symbol: 'ETH/USDT', side: 'LONG', qty: 2, entryPrice: 100, markPrice: 100, unrealizedPnl: 5, leverage: 1 });
+      // qty:0 —— 真正的"干净停止"必须是快照里也确实空仓，不能一边说 clean 一边给非零仓位
+      // （2026-08-08 code review 发现：旧版本这里塞了 qty:2 却断言无警告，自相矛盾，
+      // 掩盖了"快照有仓位但没人读它来设警告"这个事故本身的核心症状）。
+      captureStopSnapshot.mockResolvedValue({ symbol: 'ETH/USDT', side: 'LONG', qty: 0, entryPrice: 0, markPrice: 100, unrealizedPnl: 0, leverage: 1 });
 
       await svc.runStopJob('robot-1', { closePosition: true, runCode: 'sc-1', credentialId: 'cred-1', symbol: 'ETH/USDT' });
 
@@ -1638,11 +1686,40 @@ describe('箱体刷新 single-flight：慢查询期间并发 tick 不得踩踏�
         status: 'STOPPED',
         stopStage: null,
         stopWarning: null,
-        lastPositionQty: 2,
-        lastEntryPrice: 100,
-        lastUnrealizedPnl: 5,
+        lastPositionQty: 0,
+        lastEntryPrice: 0,
+        lastUnrealizedPnl: 0,
       }));
       expect(last.data.lastSnapshotAt).toBeInstanceOf(Date);
+    });
+
+    it('收尾快照显示仍有仓位时必须设置 RESIDUAL_POSITION 警告——即使 stopBot 自己报告 clean（2026-08-08 code review 发现：事故的核心症状是"快照有仓位但没人读它来设警告"，此前只有单个分支自己会设警告，快照本身从不被用作兜底真相源）', async () => {
+      const { svc, prisma, robotUpdate, stopBot, captureStopSnapshot } = makeService();
+      prisma.run.findFirst.mockResolvedValue({ id: 'run-1', runCode: 'sc-1' });
+      // stopBot 自己认为 clean（没有超时、没有它自己观测到的残留）……
+      stopBot.mockResolvedValue({ liquidationTimedOut: false, residualRemains: false });
+      // ……但收尾快照（更晚查询、更接近真相）显示交易所其实还有仓位——比如部分成交、
+      // 或者平仓单刚好在 stopBot 返回后才被拒。快照本身就是证据，必须被信任。
+      captureStopSnapshot.mockResolvedValue({ symbol: 'ETH/USDT', side: 'LONG', qty: 0.05, entryPrice: 1900, markPrice: 1900, unrealizedPnl: 0, leverage: 1 });
+
+      await svc.runStopJob('robot-1', { closePosition: true, runCode: 'sc-1', credentialId: 'cred-1', symbol: 'ETH/USDT' });
+
+      const last = robotUpdate.mock.calls.at(-1)![0];
+      expect(last.data).toEqual(expect.objectContaining({
+        status: 'STOPPED', stopWarning: 'RESIDUAL_POSITION', lastPositionQty: 0.05,
+      }));
+    });
+
+    it('用户选择不平仓(closePosition=false)但快照显示仍有仓位时也要设置 RESIDUAL_POSITION 警告（不能因为用户主动选了不平仓就连提示都不给）', async () => {
+      const { svc, prisma, robotUpdate, detachBot, captureStopSnapshot } = makeService();
+      prisma.run.findFirst.mockResolvedValue({ id: 'run-1', runCode: 'sc-1' });
+      detachBot.mockResolvedValue({ cancelFailed: [] });
+      captureStopSnapshot.mockResolvedValue({ symbol: 'ETH/USDT', side: 'LONG', qty: 0.11, entryPrice: 1900, markPrice: 1900, unrealizedPnl: 0, leverage: 1 });
+
+      await svc.runStopJob('robot-1', { closePosition: false, runCode: 'sc-1', credentialId: 'cred-1', symbol: 'ETH/USDT' });
+
+      const last = robotUpdate.mock.calls.at(-1)![0];
+      expect(last.data).toEqual(expect.objectContaining({ status: 'STOPPED', stopWarning: 'RESIDUAL_POSITION' }));
     });
 
     it('runStopJob sets stopWarning=LIQUIDATION_TIMEOUT on timeout', async () => {
@@ -1681,6 +1758,49 @@ describe('箱体刷新 single-flight：慢查询期间并发 tick 不得踩踏�
       expect(detachBot).toHaveBeenCalledWith('sc-1');
       const last = robotUpdate.mock.calls.at(-1)![0];
       expect(last.data).toEqual(expect.objectContaining({ status: 'STOPPED', lastPositionQty: 1 }));
+    });
+
+    describe('runCode 为 null（activeBoxId 为空，如箱体已 detach 但未重新激活）', () => {
+      // 根因回归防护：2026-08-07 生产事故——三台机器人的活跃箱体被编辑后 detach 未重新
+      // 激活，之后用户点停止时 activeBoxId 为空 → runCode 为 null → 此前整个平仓分支被
+      // 跳过，交易所裸留仓位超过 10 小时且无任何告警。
+
+      it('closePosition=true 且无 runCode 时仍调用 closeResidualPosition 真正查/平仓', async () => {
+        const { svc, prisma, robotUpdate, closeResidualPosition, captureStopSnapshot } = makeService();
+        prisma.run.findFirst.mockResolvedValue(null);
+        closeResidualPosition.mockResolvedValue({ residualRemains: false });
+        captureStopSnapshot.mockResolvedValue({ symbol: 'ETH/USDT', side: 'LONG', qty: 0, entryPrice: 0, markPrice: 0, unrealizedPnl: 0, leverage: 1 });
+
+        await svc.runStopJob('robot-1', { closePosition: true, runCode: null, credentialId: 'cred-1', symbol: 'ETH/USDT' });
+
+        expect(closeResidualPosition).toHaveBeenCalledWith('robot-1', 'cred-1', 'ETH/USDT');
+        const last = robotUpdate.mock.calls.at(-1)![0];
+        expect(last.data).toEqual(expect.objectContaining({ status: 'STOPPED', stopWarning: null }));
+      });
+
+      it('closeResidualPosition 报告仍有残留时设置 stopWarning=RESIDUAL_POSITION（此前完全不告警）', async () => {
+        const { svc, prisma, robotUpdate, closeResidualPosition, captureStopSnapshot } = makeService();
+        prisma.run.findFirst.mockResolvedValue(null);
+        closeResidualPosition.mockResolvedValue({ residualRemains: true });
+        captureStopSnapshot.mockResolvedValue({ symbol: 'ETH/USDT', side: 'LONG', qty: 0.11, entryPrice: 1900, markPrice: 1900, unrealizedPnl: 0, leverage: 1 });
+
+        await svc.runStopJob('robot-1', { closePosition: true, runCode: null, credentialId: 'cred-1', symbol: 'ETH/USDT' });
+
+        const last = robotUpdate.mock.calls.at(-1)![0];
+        expect(last.data).toEqual(expect.objectContaining({ status: 'STOPPED', stopWarning: 'RESIDUAL_POSITION', lastPositionQty: 0.11 }));
+      });
+
+      it('closePosition=false 且无 runCode 时不调用 closeResidualPosition（用户选择不平仓，保持原样）', async () => {
+        const { svc, prisma, robotUpdate, closeResidualPosition, captureStopSnapshot } = makeService();
+        prisma.run.findFirst.mockResolvedValue(null);
+        captureStopSnapshot.mockResolvedValue(null);
+
+        await svc.runStopJob('robot-1', { closePosition: false, runCode: null, credentialId: 'cred-1', symbol: 'ETH/USDT' });
+
+        expect(closeResidualPosition).not.toHaveBeenCalled();
+        const last = robotUpdate.mock.calls.at(-1)![0];
+        expect(last.data).toEqual(expect.objectContaining({ status: 'STOPPED' }));
+      });
     });
   });
 });

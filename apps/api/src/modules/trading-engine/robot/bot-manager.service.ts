@@ -32,6 +32,8 @@ export interface RunnerLauncher {
   assertSymbolTradable(credentialId: string, symbol: string): Promise<void>;
   /** 拉取交易所最小下单量约束，供箱体保存前预校验；拉取失败返回 null（降级放行）。 */
   getMarketConstraints(credentialId: string, symbol: string): Promise<{ minQty: number; minNotional: number; stepSize: number } | null>;
+  /** 无活跃 runner 时的兜底平仓：直接查真实持仓，非零则强平。label 用于日志/告警文案。 */
+  closeResidualPosition(label: string, credentialId: string, symbol: string): Promise<{ residualRemains: boolean }>;
 }
 
 /** 公共行情订阅源。subscribe 返回退订函数。 */
@@ -593,7 +595,8 @@ export class BotManagerService implements OnApplicationBootstrap {
       throwBoxValidationError(result.errors);
     }
 
-    if ((robot as unknown as { activeBoxId: string | null }).activeBoxId === configId) {
+    const wasActive = (robot as unknown as { activeBoxId: string | null }).activeBoxId === configId;
+    if (wasActive) {
       const run = await this.prisma.run.findFirst({
         where: { boxId: configId, endedAt: null },
         orderBy: { startedAt: 'desc' },
@@ -623,7 +626,29 @@ export class BotManagerService implements OnApplicationBootstrap {
       } as unknown as Parameters<typeof this.prisma.box.update>[0]['data'],
     });
     this.invalidateBoxCache(robotId);
-    this.logger.log(`[${robotId}] Edited box ${configId} (wasActive=${(robot as unknown as { activeBoxId: string | null }).activeBoxId === configId})`);
+
+    // 活跃箱编辑必须立即按新参数重新激活，不能留给调度器按入场价被动等待
+    // （2026-08-07 生产事故根因：detach 后从未重新激活，持仓在交易所裸奔超过 10 小时
+    // 无止损保护——弹窗文案"保存将撤销当前网格挂单并按新参数重挂（保留持仓）"
+    // 承诺的是立即重挂，不是等自然入场价触发）。编辑时持仓已存在，直接以
+    // RUNNING 模式重新接管，不走 TRAILING_ENTRY（那是空仓建仓语义）。
+    //
+    // 仅在 status===RUNNING 且 scheduler 仍存在时才重新激活（2026-08-08 code review
+    // 发现的两个衍生风险）：
+    // 1) PAUSED/STOPPING 的机器人此前 editBox 只会 detach，从不会启动 runner；不加这层
+    //    守卫会让"编辑一个暂停中机器人的箱体"意外悄悄开始真实交易，界面却仍显示暂停。
+    // 2) STOPPING 期间 requestStop 早早删掉了 scheduler（防幽灵 runner，见其注释），
+    //    此时若 editBox 抢在 activeBoxId 清空前执行，同理不该凭空启动 runner。
+    const scheduler = this.schedulers.get(robotId);
+    const isRunning = (robot as unknown as { status: string }).status === 'RUNNING';
+    if (wasActive && isRunning && scheduler) {
+      await this.activate(robotId, (robot as unknown as { symbol: string }).symbol, configId, 'RUNNING');
+      // scheduler 自己的 activeBoxConfigId 只在 onTick 内部或 markActive 时才会被置位；
+      // activate() 不会替它设置。不补这一步，下一个价格 tick 会认为"无活跃箱"重新跑一遍
+      // 激活决策，把刚重新挂好的止损/网格单再撤一遍——用这次修复本身复现同一类事故。
+      scheduler.markActive(configId);
+    }
+    this.logger.log(`[${robotId}] Edited box ${configId} (wasActive=${wasActive})`);
   }
 
   async removeBox(robotId: string, configId: string, opts: { closePosition: boolean }): Promise<void> {
@@ -908,6 +933,12 @@ export class BotManagerService implements OnApplicationBootstrap {
             data: { endedAt: new Date(), state: 'STOPPED', exitReason: ctx.closePosition ? 'USER_CLOSE' : 'USER_DETACH' },
           }).catch((e) => this.logger.warn(`[${robotId}] run end fallback update failed: ${(e as Error).message}`));
         }
+      } else if (ctx.closePosition) {
+        // 无活跃 run（如箱体已 detach 但未重新激活，2026-08-07 生产事故根因）：不能因为没有
+        // runCode 就跳过用户明确要求的平仓——直接查交易所真实持仓，非零则强平。
+        await this.prisma.robot.update({ where: { id: robotId }, data: { stopStage: 'CLOSING_POSITION' } });
+        const outcome = await this.launcher.closeResidualPosition(robotId, ctx.credentialId, ctx.symbol);
+        if (outcome.residualRemains) stopWarning = 'RESIDUAL_POSITION';
       }
 
       await this.prisma.robot.update({ where: { id: robotId }, data: { stopStage: 'VERIFYING' } });
@@ -917,6 +948,16 @@ export class BotManagerService implements OnApplicationBootstrap {
       } catch (err) {
         this.logger.warn(`[${robotId}] stop snapshot capture failed: ${(err as Error).message}`);
         if (!stopWarning) stopWarning = 'SNAPSHOT_UNAVAILABLE';
+      }
+
+      // 快照是最贴近真相的证据源（比 stopBot/closeResidualPosition 自report 的结果更晚查询、
+      // 更接近当下）：只要它显示交易所仍有仓位就必须告警，不管前面各分支自己有没有设过
+      // warning——事故的核心症状就是"快照拍到了残留仓位，却因为走了某条没设 warning 的分支
+      // 而悄无声息"（2026-08-07 生产事故 + 2026-08-08 code review 发现：修复只堵住了其中
+      // 一条分支，快照本身从未被当作兜底真相源用过）。部分成交、用户选择不平仓等场景都靠
+      // 这一步兜底。
+      if (!stopWarning && position && Math.abs(position.qty) > 1e-12) {
+        stopWarning = 'RESIDUAL_POSITION';
       }
 
       this.activeSessionCode.delete(robotId);

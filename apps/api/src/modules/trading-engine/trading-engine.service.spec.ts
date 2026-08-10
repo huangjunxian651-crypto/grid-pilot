@@ -1617,3 +1617,112 @@ describe('TradingEngineService.getMarketConstraints — 箱体保存前最小下
     expect(result).toBeNull();
   });
 });
+
+describe('TradingEngineService.closeResidualPosition — 无活跃 runner 时 stop 仍要真正平仓', () => {
+  // 根因：activeBoxId 为空（如箱体已 detach 但未重新激活）时 requestStop() 拿不到 runCode，
+  // 此前直接跳过整个平仓分支——交易所裸留仓位且不告警。这个方法是修复：不依赖 runner，
+  // 直接建 adapter（经 ExchangeAdapterBridge 包装，同其它平仓路径一致口径）查真实持仓、
+  // 非零则强平。mock 的是 createAdapter 返回的legacy 适配器（fetchPosition/小写 side），
+  // 不是包装后的 ExchangeAdapter——与 forceCloseResidualAfterStop 用的是同一层。
+  function makeSvc(opts: {
+    credential?: { exchangeId: string; accountId: string; apiKey: string; apiSecret: string; passphrase?: string; environment: string } | null;
+    fetchPosition?: ReturnType<typeof vi.fn>;
+    closePosition?: ReturnType<typeof vi.fn>;
+  }) {
+    const findOneWithSecrets = vi.fn().mockResolvedValue(opts.credential ?? null);
+    const fetchPosition = opts.fetchPosition ?? vi.fn().mockResolvedValue(null);
+    const closePosition = opts.closePosition ?? vi.fn().mockResolvedValue({ orderId: 'o1', filledQty: 0.11, avgFillPrice: 1900 });
+    const createAdapter = vi.fn().mockReturnValue({ fetchPosition, closePosition });
+    const createAndBroadcast = vi.fn().mockResolvedValue({});
+
+    const svc = new TradingEngineService(
+      {} as any,
+      { createAdapter } as any,
+      { findOneWithSecrets } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      { createAndBroadcast } as any,
+    );
+    return { svc, findOneWithSecrets, createAdapter, fetchPosition, closePosition, createAndBroadcast };
+  }
+
+  const credential = {
+    exchangeId: 'binance', accountId: 'acc1', apiKey: 'k', apiSecret: 's',
+    passphrase: undefined, environment: 'live',
+  };
+
+  it('交易所仍持仓时强平，返回 residualRemains=false', async () => {
+    const { svc, fetchPosition, closePosition } = makeSvc({
+      credential,
+      fetchPosition: vi.fn().mockResolvedValue({ symbol: 'ETH/USDT', side: 'long', qty: 0.11, avgCost: 1900, unrealizedPnl: 0, leverage: 1 }),
+    });
+
+    const result = await svc.closeResidualPosition('robot-1', 'cred-1', 'ETH/USDT');
+
+    expect(fetchPosition).toHaveBeenCalledWith('ETH/USDT');
+    expect(closePosition).toHaveBeenCalledWith('ETH/USDT', 'long');
+    expect(result).toEqual({ residualRemains: false });
+  });
+
+  it('空头残留仓位时以 short 平仓', async () => {
+    const { svc, closePosition } = makeSvc({
+      credential,
+      fetchPosition: vi.fn().mockResolvedValue({ symbol: 'ETH/USDT', side: 'short', qty: 0.5, avgCost: 1900, unrealizedPnl: 0, leverage: 1 }),
+    });
+
+    await svc.closeResidualPosition('robot-1', 'cred-1', 'ETH/USDT');
+
+    expect(closePosition).toHaveBeenCalledWith('ETH/USDT', 'short');
+  });
+
+  it('交易所已无持仓（qty=0）时不调用 closePosition', async () => {
+    const { svc, closePosition } = makeSvc({
+      credential,
+      fetchPosition: vi.fn().mockResolvedValue({ symbol: 'ETH/USDT', side: 'long', qty: 0, avgCost: 0, unrealizedPnl: 0, leverage: 1 }),
+    });
+
+    const result = await svc.closeResidualPosition('robot-1', 'cred-1', 'ETH/USDT');
+
+    expect(closePosition).not.toHaveBeenCalled();
+    expect(result).toEqual({ residualRemains: false });
+  });
+
+  it('强平失败时返回 residualRemains=true 并广播风险告警', async () => {
+    const { svc, createAndBroadcast } = makeSvc({
+      credential,
+      fetchPosition: vi.fn().mockResolvedValue({ symbol: 'ETH/USDT', side: 'long', qty: 0.11, avgCost: 1900, unrealizedPnl: 0, leverage: 1 }),
+      closePosition: vi.fn().mockRejectedValue(new Error('exchange 5xx')),
+    });
+
+    const result = await svc.closeResidualPosition('robot-1', 'cred-1', 'ETH/USDT');
+
+    expect(result).toEqual({ residualRemains: true });
+    expect(createAndBroadcast).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'alert', code: 'STOP_RESIDUAL_POSITION' }),
+    );
+  });
+
+  it('凭证不存在时降级返回 residualRemains=false（不阻断停止流程）', async () => {
+    const { svc, createAdapter } = makeSvc({ credential: null });
+
+    const result = await svc.closeResidualPosition('robot-1', 'cred-missing', 'ETH/USDT');
+
+    expect(createAdapter).not.toHaveBeenCalled();
+    expect(result).toEqual({ residualRemains: false });
+  });
+
+  it('持仓查询失败时降级返回 residualRemains=false（网络等不确定错误不误报残留）', async () => {
+    const { svc } = makeSvc({
+      credential,
+      fetchPosition: vi.fn().mockRejectedValue(new Error('network')),
+    });
+
+    const result = await svc.closeResidualPosition('robot-1', 'cred-1', 'ETH/USDT');
+
+    expect(result).toEqual({ residualRemains: false });
+  });
+});
