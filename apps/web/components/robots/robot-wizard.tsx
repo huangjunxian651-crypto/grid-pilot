@@ -295,14 +295,14 @@ export function RobotWizard() {
 
       {/* 底部导航 */}
       <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 22 }}>
-        <Button variant="ghost" onClick={() => router.push("/robots")}>{t("common.cancel")}</Button>
+        <Button variant="ghost" onClick={() => router.push("/robots")} disabled={submitting}>{t("common.cancel")}</Button>
         {step > 1 && <Button variant="outline" onClick={goBack} data-testid="wizard-back" icon={<Icons.ChevronRight size={14} style={{ transform: "rotate(180deg)" }} />}>{t("robot.wizard_back")}</Button>}
         {step < 3 && <Button variant="primary" onClick={goNext} data-testid="wizard-next" icon={<Icons.ChevronRight size={14} />}>{t("robot.wizard_next")}</Button>}
         {step === 3 && (
           <Button
             variant="primary"
             onClick={() => { if (selectedEnvironment !== "demo") { setShowLiveConfirm(true); } else { handleCreate(); } }}
-            disabled={submitting}
+            loading={submitting}
             data-testid="wizard-create"
             icon={<Icons.Check size={14} />}
           >

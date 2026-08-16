@@ -72,6 +72,7 @@ export function Button({
   icon,
   onClick,
   disabled,
+  loading,
   full,
   danger,
   style,
@@ -83,6 +84,8 @@ export function Button({
   icon?: React.ReactNode;
   onClick?: (e: React.MouseEvent<HTMLButtonElement>) => void;
   disabled?: boolean;
+  /** 请求进行中：强制禁用 + 把 icon 位置换成旋转的 spinner，文案不变。 */
+  loading?: boolean;
   full?: boolean;
   danger?: boolean;
   style?: CSSProperties;
@@ -91,11 +94,13 @@ export function Button({
   const sz = BTN_SIZE[size];
   const v = danger ? BTN_VARIANT.danger : BTN_VARIANT[variant];
   const [hovered, setHovered] = React.useState(false);
+  const isDisabled = disabled || loading;
   return (
     <button
       data-testid={testId}
       onClick={onClick}
-      disabled={disabled}
+      disabled={isDisabled}
+      aria-busy={loading || undefined}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
@@ -105,14 +110,14 @@ export function Button({
         color: hovered && danger ? "#fff" : v.fg,
         border: `1px solid ${v.bd}`,
         borderRadius: 8, fontWeight: 500, transition: "all .12s",
-        opacity: disabled ? 0.4 : 1,
-        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: isDisabled ? 0.4 : 1,
+        cursor: isDisabled ? "not-allowed" : "pointer",
         width: full ? "100%" : "auto",
         whiteSpace: "nowrap",
         ...style,
       }}
     >
-      {icon}{children}
+      {loading ? <span data-testid="btn-spinner" style={{ display: "inline-flex" }}><Icons.Spinner size={14} className="gp-spin" /></span> : icon}{children}
     </button>
   );
 }

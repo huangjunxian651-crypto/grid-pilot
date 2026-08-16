@@ -324,8 +324,8 @@ export default function RobotDetailPage({ params }: { params: Promise<{ id: stri
             <BoxForm value={boxValue} onChange={setBoxValue} direction={robot.direction === "SHORT" ? "SHORT" : "LONG"} price={robot.latestPrice ?? 0} marketConstraints={marketConstraints} />
             {boxError && <div data-testid="box-error" style={{ fontSize: 11, color: "var(--down)", marginTop: 8, padding: 8, background: "rgba(239,68,68,0.06)", borderRadius: 4 }}>{boxError}</div>}
             <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 20 }}>
-              <Button variant="ghost" onClick={() => { setShowAddBox(false); setEditTarget(null); }}>{t("common.cancel")}</Button>
-              <Button variant="primary" onClick={submitBox} data-testid="add-box-submit" disabled={isBoxSubmitDisabled}>{editTarget ? t("robot.save_changes") : t("robot.confirm_add")}</Button>
+              <Button variant="ghost" onClick={() => { setShowAddBox(false); setEditTarget(null); }} disabled={addBox.isPending || editBox.isPending}>{t("common.cancel")}</Button>
+              <Button variant="primary" onClick={submitBox} data-testid="add-box-submit" disabled={isBoxSubmitDisabled} loading={editTarget ? editBox.isPending : addBox.isPending}>{editTarget ? t("robot.save_changes") : t("robot.confirm_add")}</Button>
             </div>
           </div>
         </div>

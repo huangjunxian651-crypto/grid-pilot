@@ -28,6 +28,16 @@ describe('mapBoxValidationError', () => {
     expect(mapBoxValidationError(errors).code).not.toBe('BOX_GEOMETRY_INVALID');
   });
 
+  it('maps step-misaligned order size errors to BOX_ORDER_SIZE_NOT_STEP_ALIGNED', () => {
+    const errors = ['order size 0.015 is not a multiple of exchange stepSize 0.01 (nearest valid value 0.02)'];
+    expect(mapBoxValidationError(errors).code).toBe('BOX_ORDER_SIZE_NOT_STEP_ALIGNED');
+  });
+
+  it('does not misclassify step-misalignment errors as BOX_ORDER_SIZE_BELOW_MINIMUM (both contain "order size")', () => {
+    const errors = ['order size 0.015 is not a multiple of exchange stepSize 0.01 (nearest valid value 0.02)'];
+    expect(mapBoxValidationError(errors).code).not.toBe('BOX_ORDER_SIZE_BELOW_MINIMUM');
+  });
+
   it('maps geometry errors to BOX_GEOMETRY_INVALID', () => {
     expect(mapBoxValidationError(['takeProfitPrice must be positive']).code).toBe('BOX_GEOMETRY_INVALID');
   });

@@ -299,7 +299,7 @@ export default function LoginPage() {
                   </div>
                 )}
 
-                <Button variant="primary" size="lg" full disabled={isSubmitting}>
+                <Button variant="primary" size="lg" full disabled={isSubmitting} loading={isSubmitting}>
                   {isSubmitting ? t("common.submitting") : isLogin ? t("login.signin") : t("login.register")}
                 </Button>
               </form>

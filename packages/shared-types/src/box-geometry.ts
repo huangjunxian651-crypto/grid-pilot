@@ -390,6 +390,24 @@ export interface OrderSizeConstraints {
  * 传进去，运行期这个乘数恒为 1（死代码）。若未来接通了那条管线，这里必须同步补上，
  * 否则保存时校验通过、运行时因合约乘数被截断会再次跌破门槛。
  */
+/** value 是否为 stepSize 的整数倍。stepSize<=0（交易所未提供步长信息）时视为总是对齐，跳过校验。
+ * epsilon 对齐 minOrderSizeRequirement 的 0.0001 惯例，作用在同一个 value/stepSize 商空间。
+ * 用途：mainGridPortionSize 若不与 stepSize 对齐，策略引擎按目标持仓反推下单量、向 stepSize
+ * 截断时会按网格档位奇偶性周期性错位，导致累计持仓与网格线脱节（见 avg-grid-price.ts 的
+ * 「Alpha 超额」失真事故，2026-08-15）。 */
+export function isStepAligned(value: number, stepSize: number): boolean {
+  if (!(stepSize > 0)) return true;
+  const steps = value / stepSize;
+  return Math.abs(steps - Math.round(steps)) <= 0.0001;
+}
+
+/** 把 value 四舍五入到最近的 stepSize 整数倍，供 isStepAligned 校验失败时给出可执行的建议值。
+ * 至少建议 1 个 stepSize（不足半个 stepSize 时不建议 0——0 不是可执行的下单量）。 */
+export function nearestStepAlignedValue(value: number, stepSize: number): number {
+  if (!(stepSize > 0)) return value;
+  return Math.max(1, Math.round(value / stepSize)) * stepSize;
+}
+
 export function minOrderSizeRequirement(
   boxLowPrice: number,
   constraints: OrderSizeConstraints,

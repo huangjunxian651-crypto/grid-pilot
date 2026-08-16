@@ -96,6 +96,8 @@ body {
 *::-webkit-scrollbar-track { background: transparent; }
 
 @keyframes gp-ping { 75%, 100% { transform: scale(2.4); opacity: 0; } }
+@keyframes gp-spin { to { transform: rotate(360deg); } }
+.gp-spin { animation: gp-spin 0.7s linear infinite; }
 
 /* ── Responsive Layout Utilities ─────────────────────────── */
 

@@ -118,6 +118,22 @@ describe("box-form-model", () => {
     expect(errs.orderSize).toBeNull();
   });
 
+  it("boxFormErrors：每格量已过最小下单量门槛，但不是 stepSize 整数倍时返回对齐错误（0.015=1.5×stepSize）", () => {
+    // boxLowPrice=2390；0.015×2390=35.85≥20（过 minNotional），minRequired=0.01（0.015 也 ≥），
+    // 但 0.015 不是 stepSize=0.01 的整数倍——策略引擎每单量向 stepSize 截断会周期性错位。
+    const v = { ...emptyBoxFormValue(), takeProfitPrice: "2800", mainGridCount: "200",
+      mainGridStep: "2", stopLossGridStep: "2", mainGridPortionSize: "0.015" };
+    const errs = boxFormErrors(v, "LONG", { minQty: 0.001, minNotional: 20, stepSize: 0.01 });
+    expect(errs.orderSize?.key).toBe("robot.order_size_not_step_aligned");
+  });
+
+  it("boxFormErrors：每格量是 stepSize 整数倍时不报对齐错误", () => {
+    const v = { ...emptyBoxFormValue(), takeProfitPrice: "2800", mainGridCount: "200",
+      mainGridStep: "2", stopLossGridStep: "2", mainGridPortionSize: "0.02" };
+    const errs = boxFormErrors(v, "LONG", { minQty: 0.001, minNotional: 20, stepSize: 0.01 });
+    expect(errs.orderSize).toBeNull();
+  });
+
   it("boxFormValueFromRecommendation 把推荐参数映射为表单值字符串", () => {
     const v = boxFormValueFromRecommendation({
       takeProfitPrice: 2700, mainGridCount: 30, mainGridStep: 10, mainGridPortionSize: 0.05,

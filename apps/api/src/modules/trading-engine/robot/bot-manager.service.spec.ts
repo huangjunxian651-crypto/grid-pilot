@@ -1347,6 +1347,43 @@ describe('BotManagerService', () => {
       expect(scheduler.markActive).toHaveBeenCalledWith('box-1');
     });
 
+    it('活跃箱且即将立即重新激活时：不能中途调用 scheduler.onBoxTerminated 释放活跃槽位——中途释放会在 detach/重新 activate 之间的 await 窗口里让并发的价格 tick 把同一个箱体再次激活，两次 activate 各自算出同一秒的 runCode，第二次 Run.create 撞唯一约束崩溃（2026-08-15 本地复现：编辑运行中箱体保存报错）', async () => {
+      const { svc, prisma } = makeService();
+      ((prisma as any).robot).findUnique = vi.fn().mockResolvedValue({ id: 'robot-1', direction: 'LONG', activeBoxId: 'box-1', symbol: 'ETH/USDT', accountId: 'cred-1', status: 'RUNNING' });
+      (prisma.box as any).findFirst = vi.fn().mockResolvedValue({ id: 'box-1', robotId: 'robot-1', direction: 'LONG', deletedAt: null });
+      (prisma.box as any).findMany = vi.fn().mockResolvedValue([]);
+      (prisma.box as any).update = vi.fn().mockResolvedValue({ id: 'box-1' });
+      (prisma as any).run = { findFirst: vi.fn().mockResolvedValue({ runCode: 'S_OLD' }), updateMany: vi.fn().mockResolvedValue({ count: 0 }) };
+      ((prisma as any).robot).update = vi.fn().mockResolvedValue({});
+      (svc as any).activeSessionCode.set('robot-1', 'S_OLD');
+      const scheduler = { markActive: vi.fn(), onBoxTerminated: vi.fn(), onTick: vi.fn(), activeBox: null };
+      (svc as any).schedulers.set('robot-1', scheduler);
+
+      await svc.editBox('robot-1', 'box-1', editInput);
+
+      expect(scheduler.onBoxTerminated).not.toHaveBeenCalled();
+      expect(scheduler.markActive).toHaveBeenCalledWith('box-1');
+    });
+
+    it('活跃箱重新激活失败(如交易所下单报错)时：仍必须释放 scheduler 活跃槽位再把错误抛出——不然槽位永远卡在旧箱体上，机器人从此再也不会被任何 tick 重新评估激活（比修复前的偶发崩溃更严重的永久卡死，code review 发现）', async () => {
+      const { svc, prisma, startBot } = makeService();
+      ((prisma as any).robot).findUnique = vi.fn().mockResolvedValue({ id: 'robot-1', direction: 'LONG', activeBoxId: 'box-1', symbol: 'ETH/USDT', accountId: 'cred-1', status: 'RUNNING' });
+      (prisma.box as any).findFirst = vi.fn().mockResolvedValue({ id: 'box-1', robotId: 'robot-1', direction: 'LONG', deletedAt: null });
+      (prisma.box as any).findMany = vi.fn().mockResolvedValue([]);
+      (prisma.box as any).update = vi.fn().mockResolvedValue({ id: 'box-1' });
+      (prisma as any).run = { findFirst: vi.fn().mockResolvedValue({ runCode: 'S_OLD' }), updateMany: vi.fn().mockResolvedValue({ count: 0 }) };
+      ((prisma as any).robot).update = vi.fn().mockResolvedValue({});
+      (svc as any).activeSessionCode.set('robot-1', 'S_OLD');
+      const scheduler = { markActive: vi.fn(), onBoxTerminated: vi.fn(), onTick: vi.fn(), activeBox: null };
+      (svc as any).schedulers.set('robot-1', scheduler);
+      startBot.mockRejectedValueOnce(new Error('exchange rejected order'));
+
+      await expect(svc.editBox('robot-1', 'box-1', editInput)).rejects.toThrow('exchange rejected order');
+
+      expect(scheduler.onBoxTerminated).toHaveBeenCalledWith('box-1');
+      expect(scheduler.markActive).not.toHaveBeenCalled();
+    });
+
     it('活跃箱但机器人不是 RUNNING（如 PAUSED）:只 detach 不重新激活——不能让编辑箱体在暂停态偷偷启动真实交易（2026-08-08 code review 发现）', async () => {
       const { svc, prisma, detachBot, startBot } = makeService();
       ((prisma as any).robot).findUnique = vi.fn().mockResolvedValue({ id: 'robot-1', direction: 'LONG', activeBoxId: 'box-1', symbol: 'ETH/USDT', accountId: 'cred-1', status: 'PAUSED' });
@@ -1364,6 +1401,8 @@ describe('BotManagerService', () => {
       expect(detachBot).toHaveBeenCalledWith('S_OLD');
       expect(startBot).not.toHaveBeenCalled();
       expect(scheduler.markActive).not.toHaveBeenCalled();
+      // 不会重新激活：必须释放活跃槽位，否则调度器会误以为该箱仍活跃而永远不再评估任何箱体
+      expect(scheduler.onBoxTerminated).toHaveBeenCalledWith('box-1');
     });
 
     it('活跃箱且 RUNNING 但 scheduler 已不存在(如正在 STOPPING):只 detach 不重新激活——没有 scheduler 意味着没人在管这个机器人，不能凭空启动 runner（2026-08-08 code review 发现）', async () => {

@@ -213,11 +213,12 @@ export default function ExchangeKeysPage() {
           </div>
           {editingId == null && <ReferralAccountFork exchangeId={form.exchangeId} />}
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <Button variant="ghost" size="md" onClick={() => { setShowForm(false); setEditingId(null); setForm({ exchangeId: "binance", environment: "demo", accountId: "", label: "", apiKey: "", apiSecret: "", passphrase: "" }); setMaskedValues({ apiKey: "", apiSecret: "" }); }}>{t("common.cancel")}</Button>
+            <Button variant="ghost" size="md" disabled={createMutation.isPending || updateMutation.isPending} onClick={() => { setShowForm(false); setEditingId(null); setForm({ exchangeId: "binance", environment: "demo", accountId: "", label: "", apiKey: "", apiSecret: "", passphrase: "" }); setMaskedValues({ apiKey: "", apiSecret: "" }); }}>{t("common.cancel")}</Button>
             <Button
               variant="primary"
               size="md"
               disabled={!form.accountId || !form.label || (!editingId && (!form.apiKey || !form.apiSecret)) || createMutation.isPending || updateMutation.isPending}
+              loading={createMutation.isPending || updateMutation.isPending}
               onClick={handleSave}
             >
               {createMutation.isPending || updateMutation.isPending ? t("common.saving") : t("common.save")}

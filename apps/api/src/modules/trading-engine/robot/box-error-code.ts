@@ -7,9 +7,10 @@ import { BadRequestException } from "@nestjs/common";
  * 1. 重叠 → BOX_OVERLAP
  * 2. 方向不一致 → BOX_DIRECTION_MISMATCH
  * 3. 止损缺失 → BOX_STOPLOSS_REQUIRED
- * 4. 每格量低于交易所最小下单量 → BOX_ORDER_SIZE_BELOW_MINIMUM
- * 5. 几何/网格参数非法 → BOX_GEOMETRY_INVALID
- * 6. 其他 → BOX_VALIDATION_FAILED
+ * 4. 每格量不是交易所 stepSize 整数倍 → BOX_ORDER_SIZE_NOT_STEP_ALIGNED
+ * 5. 每格量低于交易所最小下单量 → BOX_ORDER_SIZE_BELOW_MINIMUM
+ * 6. 几何/网格参数非法 → BOX_GEOMETRY_INVALID
+ * 7. 其他 → BOX_VALIDATION_FAILED
  *
  * 规则源：spec §六、§12.1
  */
@@ -32,6 +33,11 @@ export function mapBoxValidationError(errors: string[]): {
   }
   if (errors.some((e) => e.includes("stop-loss"))) {
     return { code: "BOX_STOPLOSS_REQUIRED", message: errorStr };
+  }
+  // 必须在“低于最小下单量”之前判断——两者错误文案都含 "order size"，且更具体的
+  // "not a multiple of" 优先，否则会被下面的宽松匹配误吞成 BOX_ORDER_SIZE_BELOW_MINIMUM
+  if (errors.some((e) => e.includes("not a multiple of"))) {
+    return { code: "BOX_ORDER_SIZE_NOT_STEP_ALIGNED", message: errorStr };
   }
   // 必须在几何校验之前判断——错误文案里带 "box low price"，会被下面几何分支的宽松匹配误吞
   if (errors.some((e) => e.includes("order size"))) {

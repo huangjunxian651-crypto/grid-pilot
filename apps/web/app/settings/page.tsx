@@ -290,7 +290,7 @@ export default function SettingsPage() {
                   <Field label={t("settings.email_field")} value={email} type="email" onChange={setEmail} />
                 </div>
                 <div style={{ marginTop: 20 }}>
-                  <Button variant="primary" size="md" onClick={handleSaveProfile} disabled={updateProfile.isPending || profileLoading}>
+                  <Button variant="primary" size="md" onClick={handleSaveProfile} disabled={updateProfile.isPending || profileLoading} loading={updateProfile.isPending}>
                     {updateProfile.isPending ? t("common.saving") : t("common.save")}
                   </Button>
                 </div>
@@ -376,7 +376,7 @@ export default function SettingsPage() {
                 <Field label={t("settings.confirm_password")} type="password" value={confirmNewPassword} onChange={setConfirmNewPassword} />
               </div>
               <div style={{ marginTop: 20, display: "flex", gap: 8 }}>
-                <Button variant="primary" size="md" onClick={handleUpdatePassword} disabled={changePassword.isPending}>
+                <Button variant="primary" size="md" onClick={handleUpdatePassword} disabled={changePassword.isPending} loading={changePassword.isPending}>
                   {changePassword.isPending ? t("common.submitting") : t("settings.update_password")}
                 </Button>
               </div>

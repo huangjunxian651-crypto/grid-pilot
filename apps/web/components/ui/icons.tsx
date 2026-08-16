@@ -45,6 +45,7 @@ export const Icons = {
   ChevronDown: I(<polyline points="6 9 12 15 18 9" />),
   ChevronUp: I(<polyline points="18 15 12 9 6 15" />),
   Check: I(<polyline points="20 6 9 17 4 12" />),
+  Spinner: I(<path d="M12 2a10 10 0 0 1 10 10" />),
   X: I(<><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></>),
   ArrowUp: I(<><line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" /></>),
   ArrowDown: I(<><line x1="12" y1="5" x2="12" y2="19" /><polyline points="19 12 12 19 5 12" /></>),

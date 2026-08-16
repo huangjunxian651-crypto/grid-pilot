@@ -596,6 +596,15 @@ export class BotManagerService implements OnApplicationBootstrap {
     }
 
     const wasActive = (robot as unknown as { activeBoxId: string | null }).activeBoxId === configId;
+    const scheduler = this.schedulers.get(robotId);
+    const isRunning = (robot as unknown as { status: string }).status === 'RUNNING';
+    // 即将立即重新激活同一个箱体时，绝不能中途调用 onBoxTerminated 释放调度器的活跃槽位：
+    // 从这里到下方 activate()+markActive() 之间要 await 多次网络调用（detachBot/getPosition
+    // 等），一旦其间释放槽位，一次并发的价格 tick 就会认为「无活跃箱」抢先把同一个箱体再激活
+    // 一遍——两次 activate() 各自按当前秒生成 runCode，第二次 Run.create 撞 runCode 唯一约束
+    // 崩溃（2026-08-15 本地复现：编辑运行中箱体保存报错）。只有确定不会重新激活（PAUSED/无
+    // scheduler）时才需要立刻释放，让调度器下一轮能评估别的箱体。
+    const willReactivate = wasActive && isRunning && !!scheduler;
     if (wasActive) {
       const run = await this.prisma.run.findFirst({
         where: { boxId: configId, endedAt: null },
@@ -604,7 +613,9 @@ export class BotManagerService implements OnApplicationBootstrap {
       if (run) {
         await this.launcher.detachBot((run as unknown as { runCode: string }).runCode);
       }
-      this.schedulers.get(robotId)?.onBoxTerminated(configId);
+      if (!willReactivate) {
+        scheduler?.onBoxTerminated(configId);
+      }
       this.activeSessionCode.delete(robotId);
       await this.prisma.robot.update({ where: { id: robotId }, data: { activeBoxId: null } });
     }
@@ -639,14 +650,21 @@ export class BotManagerService implements OnApplicationBootstrap {
     //    守卫会让"编辑一个暂停中机器人的箱体"意外悄悄开始真实交易，界面却仍显示暂停。
     // 2) STOPPING 期间 requestStop 早早删掉了 scheduler（防幽灵 runner，见其注释），
     //    此时若 editBox 抢在 activeBoxId 清空前执行，同理不该凭空启动 runner。
-    const scheduler = this.schedulers.get(robotId);
-    const isRunning = (robot as unknown as { status: string }).status === 'RUNNING';
-    if (wasActive && isRunning && scheduler) {
-      await this.activate(robotId, (robot as unknown as { symbol: string }).symbol, configId, 'RUNNING');
-      // scheduler 自己的 activeBoxConfigId 只在 onTick 内部或 markActive 时才会被置位；
-      // activate() 不会替它设置。不补这一步，下一个价格 tick 会认为"无活跃箱"重新跑一遍
-      // 激活决策，把刚重新挂好的止损/网格单再撤一遍——用这次修复本身复现同一类事故。
-      scheduler.markActive(configId);
+    if (willReactivate) {
+      try {
+        await this.activate(robotId, (robot as unknown as { symbol: string }).symbol, configId, 'RUNNING');
+        // scheduler 自己的 activeBoxConfigId 只在 onTick 内部或 markActive 时才会被置位；
+        // activate() 不会替它设置。不补这一步，下一个价格 tick 会认为"无活跃箱"重新跑一遍
+        // 激活决策，把刚重新挂好的止损/网格单再撤一遍——用这次修复本身复现同一类事故。
+        scheduler.markActive(configId);
+      } catch (err) {
+        // 重新激活本身失败（如交易所下单报错）：槽位从未被 onBoxTerminated 释放过（上面为了
+        // 关闭竞态窗口特意跳过了），必须在这里补释放再抛出——否则槽位永远卡在这个箱体上，
+        // 之后任何价格 tick 都会因为 onTick 的 activeBoxConfigId!==null 守卫而拒绝重新评估，
+        // 机器人从此再也不会激活任何箱体，比修复前偶发的启动崩溃更严重（code review 发现）。
+        scheduler.onBoxTerminated(configId);
+        throw err;
+      }
     }
     this.logger.log(`[${robotId}] Edited box ${configId} (wasActive=${wasActive})`);
   }

@@ -154,6 +154,27 @@ describe('validateBoxAddition — 最小下单量预校验（按箱体真实最�
   });
 });
 
+describe('validateBoxAddition — 每格量须为 stepSize 整数倍（否则每单下单量向下截断会周期性错位，累计持仓与网格线脱节）', () => {
+  // 默认夹具真实最低价 2390，minNotional/minQty 门槛在此远低于 0.015，纯粹测对齐本身。
+  const mc = { minQty: 0.001, minNotional: 20, stepSize: 0.01 };
+
+  it('每格量已过最小下单量门槛，但不是 stepSize 整数倍时仍拒绝（0.015 = 1.5×stepSize）', () => {
+    const r = validateBoxAddition(box({ mainGridPortionSize: 0.015 }), [], 'LONG', mc);
+    expect(r.valid).toBe(false);
+    expect(r.errors.join()).toMatch(/not a multiple of/i);
+  });
+
+  it('每格量是 stepSize 整数倍时通过', () => {
+    const r = validateBoxAddition(box({ mainGridPortionSize: 0.02 }), [], 'LONG', mc);
+    expect(r.valid).toBe(true);
+  });
+
+  it('stepSize 未提供（0 或缺失）时跳过对齐校验', () => {
+    const r = validateBoxAddition(box({ mainGridPortionSize: 0.015 }), [], 'LONG', { minQty: 0.001, minNotional: 20, stepSize: 0 });
+    expect(r.valid).toBe(true);
+  });
+});
+
 describe('validateBoxAddition SHORT', () => {
   // SHORT 真实范围 [boxLowPrice, boxHighPrice] = [takeProfitPrice, liquidationPrice]
   // takeProfitPrice=2200, mainGridCount=200, mainGridStep=2 → mainGridDepth=400 → fullPosition=2600

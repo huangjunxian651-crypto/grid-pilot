@@ -16,6 +16,8 @@ import {
   validateBoxGeometry,
   predictActions,
   minOrderSizeRequirement,
+  isStepAligned,
+  nearestStepAlignedValue,
   type BoxGeometryConfig,
   type BoxTargetConfig,
 } from "../box-geometry";
@@ -626,5 +628,33 @@ describe("minOrderSizeRequirement", () => {
   it("minNotional 为 0（交易所无此约束，如 Gate.io）时只看 minQty", () => {
     const min = minOrderSizeRequirement(1800, { minQty: 0.01, minNotional: 0, stepSize: 0.001 });
     expect(min).toBeCloseTo(0.01, 10);
+  });
+});
+
+describe("isStepAligned / nearestStepAlignedValue", () => {
+  it("是 stepSize 整数倍时判定对齐（0.015 = 1.5×0.01 反例见下方）", () => {
+    expect(isStepAligned(0.02, 0.01)).toBe(true);
+    expect(isStepAligned(0.01, 0.01)).toBe(true);
+  });
+
+  it("不是 stepSize 整数倍时判定不对齐——生产真实事故：portion=0.015 是 stepSize=0.01 的 1.5 倍", () => {
+    expect(isStepAligned(0.015, 0.01)).toBe(false);
+  });
+
+  it("浮点噪声容差内仍判定对齐（epsilon 对齐 minOrderSizeRequirement 的 0.0001 惯例）", () => {
+    expect(isStepAligned(0.02 + 1e-10, 0.01)).toBe(true);
+  });
+
+  it("stepSize 未提供（0 或缺失）时总是判定对齐——跳过该项校验", () => {
+    expect(isStepAligned(0.015, 0)).toBe(true);
+  });
+
+  it("nearestStepAlignedValue 四舍五入到最近的 stepSize 整数倍", () => {
+    expect(nearestStepAlignedValue(0.015, 0.01)).toBeCloseTo(0.02, 10);
+    expect(nearestStepAlignedValue(0.012, 0.01)).toBeCloseTo(0.01, 10);
+  });
+
+  it("nearestStepAlignedValue 不足半个 stepSize 时不建议 0——至少建议 1 个 stepSize（否则不是可执行的建议值）", () => {
+    expect(nearestStepAlignedValue(0.002, 0.01)).toBeCloseTo(0.01, 10);
   });
 });

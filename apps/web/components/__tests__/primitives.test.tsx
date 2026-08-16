@@ -54,6 +54,48 @@ describe("Button", () => {
     // We verify the button renders correctly with the danger prop
     expect(screen.getByText("Danger")).toBeInTheDocument();
   });
+
+  it("is disabled when loading=true, even without an explicit disabled prop", () => {
+    render(<Button loading>Save</Button>);
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  });
+
+  it("does not fire onClick when loading=true", () => {
+    const handleClick = vi.fn();
+    render(<Button loading onClick={handleClick}>Save</Button>);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(handleClick).not.toHaveBeenCalled();
+  });
+
+  it("marks the button aria-busy when loading=true, for screen readers", () => {
+    render(<Button loading>Save</Button>);
+    expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute("aria-busy", "true");
+  });
+
+  it("does not mark aria-busy when loading is false/omitted", () => {
+    render(<Button>Save</Button>);
+    expect(screen.getByRole("button", { name: "Save" })).not.toHaveAttribute("aria-busy");
+  });
+
+  it("keeps the label text unchanged while loading (no text-swap)", () => {
+    render(<Button loading>Save</Button>);
+    expect(screen.getByText("Save")).toBeInTheDocument();
+  });
+
+  it("shows a spinner while loading, replacing any passed icon", () => {
+    const { container, rerender } = render(<Button icon={<span data-testid="custom-icon" />}>Save</Button>);
+    expect(screen.getByTestId("custom-icon")).toBeInTheDocument();
+    expect(container.querySelector('[data-testid="btn-spinner"]')).not.toBeInTheDocument();
+
+    rerender(<Button loading icon={<span data-testid="custom-icon" />}>Save</Button>);
+    expect(screen.queryByTestId("custom-icon")).not.toBeInTheDocument();
+    expect(container.querySelector('[data-testid="btn-spinner"]')).toBeInTheDocument();
+  });
+
+  it("does not show a spinner when loading is false/omitted", () => {
+    const { container } = render(<Button>Save</Button>);
+    expect(container.querySelector('[data-testid="btn-spinner"]')).not.toBeInTheDocument();
+  });
 });
 
 describe("Field", () => {

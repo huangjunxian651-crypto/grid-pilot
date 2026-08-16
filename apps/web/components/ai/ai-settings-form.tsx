@@ -109,6 +109,7 @@ export function AiSettingsForm({ onSaved }: { onSaved?: () => void }) {
           size="md"
           onClick={saveAi}
           disabled={updateAi.isPending}
+          loading={updateAi.isPending}
         >
           {t("settings.ai_save")}
         </Button>

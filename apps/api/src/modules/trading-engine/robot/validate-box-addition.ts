@@ -2,6 +2,8 @@ import {
   deriveBoxLines,
   validateBoxGeometry,
   minOrderSizeRequirement,
+  isStepAligned,
+  nearestStepAlignedValue,
   type BoxGeometryConfig,
   type OrderSizeConstraints,
 } from '@gridpilot/shared-types';
@@ -76,6 +78,17 @@ export function validateBoxAddition(
         `order size ${portionSize} below exchange minimum at box low price ${nb.boxLowPrice} ` +
           `(minQty=${marketConstraints.minQty}, minNotional=${marketConstraints.minNotional}, ` +
           `stepSize=${marketConstraints.stepSize}, suggested>=${minRequired})`,
+      );
+    }
+    // 每格量须为 stepSize 整数倍：策略引擎按「目标持仓(格数×portionSize) − 实际持仓」下单，
+    // 下单量向 stepSize 截断；若 portionSize 本身不是 stepSize 整数倍，奇偶网格档位会周期性
+    // 截掉半个 stepSize，导致累计持仓与网格线脱节，avg-grid-price 按持仓反推的归属线跨格
+    // 加权到错误的价格，产生虚假的负「Alpha 超额」（非真实滑点损失，是统计口径错位）。
+    const { stepSize } = marketConstraints;
+    if (!isStepAligned(portionSize, stepSize)) {
+      errors.push(
+        `order size ${portionSize} is not a multiple of exchange stepSize ${stepSize} ` +
+          `(nearest valid value ${nearestStepAlignedValue(portionSize, stepSize)})`,
       );
     }
   }
