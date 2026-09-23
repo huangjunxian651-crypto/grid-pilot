@@ -110,7 +110,7 @@ export function buildSystemPrompt(language?: string): string {
     "- direction: LONG or SHORT.",
     "- takeProfitPrice: the profit-side anchor price (LONG = the high end, SHORT = the low end).",
     "- mainGridCount × mainGridStep: the main grid — number of levels and the price spacing between them. Main grid depth = mainGridCount * mainGridStep.",
-    "- mainGridPortionSize: USDT notional value invested per grid level; the runtime converts it to contracts/coins using the grid price.",
+    "- mainGridPortionSize: base quantity traded per grid level (in contracts/coins).",
     "- leverage: futures leverage.",
     "- stopLossGridCount × stopLossGridStep: the stop-loss ladder beyond the full-position line. Set stopLossGridCount=0 for no stop loss.",
     "- isolationStep: width of the isolation band between main grid and stop-loss zone.",

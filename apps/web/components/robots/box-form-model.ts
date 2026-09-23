@@ -1,6 +1,6 @@
 import { deriveLayout, type BoxLayout } from "@/lib/store";
 import { boxGeometryError, type BoxGeometryError } from "@/lib/box-geometry-error";
-import { minOrderValueRequirement, type OrderSizeConstraints } from "@gridpilot/shared-types";
+import { minOrderSizeRequirement, isStepAligned, nearestStepAlignedValue, type OrderSizeConstraints } from "@gridpilot/shared-types";
 import type { AddBoxInput, RobotBox } from "@/lib/api";
 
 /** 箱体参数表单值（全部字符串，对应受控输入框）。 */
@@ -113,13 +113,21 @@ export function boxFormErrors(
   // 向上取整——交易所下单会把数量向下截断到 stepSize 整数倍，不取整则用户填入的值即便过了
   // 未取整的理论最小值，截断后名义价值仍可能跌破门槛。见 minOrderSizeRequirement。
   let orderSize: BoxGeometryError | null = null;
-  const portionValue = Number(v.mainGridPortionSize);
-  if (marketConstraints && layout && portionValue > 0) {
-    const minRequired = minOrderValueRequirement(layout.boxLowPrice, marketConstraints);
-    if (portionValue < minRequired) {
+  const portionSize = Number(v.mainGridPortionSize);
+  if (marketConstraints && layout && portionSize > 0) {
+    const minRequired = minOrderSizeRequirement(layout.boxLowPrice, marketConstraints);
+    if (portionSize < minRequired) {
       orderSize = {
         key: "robot.order_size_below_minimum",
-        params: { suggested: minRequired.toFixed(2), boxLowPrice: layout.boxLowPrice.toFixed(2) },
+        params: { suggested: minRequired.toFixed(6), boxLowPrice: layout.boxLowPrice.toFixed(2) },
+      };
+    } else if (!isStepAligned(portionSize, marketConstraints.stepSize)) {
+      // 每格量须为 stepSize 整数倍：否则策略引擎按目标持仓反推下单量、向 stepSize 截断时会
+      // 周期性错位，导致累计持仓与网格线脱节（见 apps/api validate-box-addition.ts 同名校验）。
+      const suggested = nearestStepAlignedValue(portionSize, marketConstraints.stepSize);
+      orderSize = {
+        key: "robot.order_size_not_step_aligned",
+        params: { suggested: suggested.toFixed(6), stepSize: String(marketConstraints.stepSize) },
       };
     }
   }

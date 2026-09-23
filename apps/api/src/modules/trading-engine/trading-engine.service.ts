@@ -41,20 +41,6 @@ export interface TerminalReason {
   exitReason: string;
 }
 
-function positionDriftThreshold(snapshot: unknown, fallbackValue: number | undefined, referencePrice: number): number {
-  const config = snapshot as Record<string, unknown> | null;
-  const price = Math.abs(referencePrice);
-  const value = config?.mainGridPortionValue;
-  if (typeof value === 'number' && value > 0 && price > 0) return value / price;
-
-  // 旧 run 快照没有 mainGridPortionValue，继续按旧的基础币数量阈值处理。
-  const legacyQuantity = config?.mainGridPortionSize;
-  if (typeof legacyQuantity === 'number' && legacyQuantity > 0) return legacyQuantity;
-
-  // 没有快照时按旧数量口径兜底，避免影响历史 run 的恢复行为。
-  return typeof fallbackValue === 'number' && fallbackValue > 0 ? fallbackValue : 0;
-}
-
 export interface ActiveOrderStatus {
   id: string;
   side: 'buy' | 'sell';
@@ -274,11 +260,7 @@ export class TradingEngineService implements OnModuleInit, OnModuleDestroy {
           boxId: configId,
           runCode,
           state: initialState ?? (configRecord.trailingEntry ? 'TRAILING_ENTRY' : 'RUNNING'),
-          configSnapshot: {
-            ...configRecord,
-            // 让新 run 的对账/成交回放知道该字段是 USDT 名义价值。
-            mainGridPortionValue: configRecord.mainGridPortionSize,
-          } as unknown as Prisma.InputJsonValue,
+          configSnapshot: configRecord as unknown as Prisma.InputJsonValue,
           pnlSignedPosition: seededPositionQty,
           pnlAvgCost: seededAvgCost,
         },
@@ -388,11 +370,8 @@ export class TradingEngineService implements OnModuleInit, OnModuleDestroy {
       const exchangeQty = position?.baseAssetQty ?? 0;
       // 阈值取 run 实际交易的快照配置（与运行期 checkPositionDrift 口径一致），
       // 箱体在会话间被编辑时不改用新配置（code-review M3）。
-      const minPortion = positionDriftThreshold(
-        run.configSnapshot,
-        configRecord.mainGridPortionSize,
-        position?.entryPrice ?? 0,
-      );
+      const snapshotPortion = (run.configSnapshot as Record<string, unknown> | null)?.mainGridPortionSize as number | undefined;
+      const minPortion = snapshotPortion && snapshotPortion > 0 ? snapshotPortion : configRecord.mainGridPortionSize;
       if (!minPortion || minPortion <= 0) return run;
       if (!detectPositionDrift(run.pnlSignedPosition, exchangeQty, minPortion)) {
         return run;
@@ -1180,11 +1159,7 @@ export class TradingEngineService implements OnModuleInit, OnModuleDestroy {
     if (!state?.position) return;
     const run = await this.prisma.run.findUnique({ where: { runCode } });
     if (!run) return;
-    const minPortion = positionDriftThreshold(
-      run.configSnapshot,
-      undefined,
-      state.position.entryPrice,
-    );
+    const minPortion = (run.configSnapshot as Record<string, unknown> | null)?.mainGridPortionSize as number | undefined;
     if (!minPortion || minPortion <= 0) return;
 
     const drifted = detectPositionDrift(run.pnlSignedPosition, state.position.baseAssetQty, minPortion);
@@ -1257,14 +1232,8 @@ export class TradingEngineService implements OnModuleInit, OnModuleDestroy {
 
     const updatedRun = await this.prisma.run.findUnique({ where: { id: run.id } });
     const dbPosition = updatedRun?.pnlSignedPosition ?? 0;
-    const exchangeSnapshot = await adapter.getPosition(robot.symbol);
-    const exchangePosition = exchangeSnapshot.baseAssetQty;
-    const exchangeEntryPrice = exchangeSnapshot.entryPrice;
-    const minPortion = positionDriftThreshold(
-      updatedRun?.configSnapshot,
-      undefined,
-      exchangeEntryPrice,
-    );
+    const exchangePosition = (await adapter.getPosition(robot.symbol)).baseAssetQty;
+    const minPortion = (updatedRun?.configSnapshot as Record<string, unknown> | null)?.mainGridPortionSize as number | undefined;
     const positionMatches = !minPortion || minPortion <= 0
       ? Math.abs(dbPosition - exchangePosition) < 1e-9
       : !detectPositionDrift(dbPosition, exchangePosition, minPortion);
@@ -1439,8 +1408,6 @@ export class TradingEngineService implements OnModuleInit, OnModuleDestroy {
       mainGridCount: configRecord.mainGridCount,
       mainGridStep: configRecord.mainGridStep,
       mainGridPortionSize: configRecord.mainGridPortionSize,
-      // 现有数据库字段保留不变，但新运行时口径统一为每格 USDT 名义价值。
-      mainGridPortionValue: configRecord.mainGridPortionSize,
       leverage: configRecord.leverage,
       stopLossGridCount: configRecord.stopLossGridCount,
       stopLossGridStep: configRecord.stopLossGridStep,

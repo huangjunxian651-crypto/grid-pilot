@@ -86,25 +86,25 @@ describe('validateBoxAddition', () => {
   });
 });
 
-describe('validateBoxAddition — 每格 USDT 名义价值预校验（按箱体真实最低价，不是实时价）', () => {
+describe('validateBoxAddition — 最小下单量预校验（按箱体真实最低价折算 + stepSize 向上取整，不是实时价）', () => {
   // 默认夹具真实范围 [2390, 2800]（见顶部注释），最低价 2390。
   const mc = { minQty: 0.001, minNotional: 20, stepSize: 0.01 };
 
   it('每格量按箱体最低价折算名义价值不足 minNotional 时拒绝', () => {
-    // 每格投入 20 USDT，最低价按 stepSize 截断后仍可能低于交易所门槛 23.90。
-    const r = validateBoxAddition(box({ mainGridPortionSize: 20 }), [], 'LONG', mc);
+    // 0.005 × 2390 = 11.95 < 20
+    const r = validateBoxAddition(box({ mainGridPortionSize: 0.005 }), [], 'LONG', mc);
     expect(r.valid).toBe(false);
-    expect(r.errors.join()).toMatch(/order (size|value)/i);
+    expect(r.errors.join()).toMatch(/order size/i);
   });
 
   it('每格量在箱体最低价上仍能满足 minNotional（且已是 stepSize 整数倍）时通过', () => {
-    // 按最低价换算，23.90 是实际下限；40 USDT 足够。
-    const r = validateBoxAddition(box({ mainGridPortionSize: 40 }), [], 'LONG', mc);
+    // 20/2390=0.00837，按 stepSize=0.01 向上取整 → 0.01；0.01 本身即为下限
+    const r = validateBoxAddition(box({ mainGridPortionSize: 0.01 }), [], 'LONG', mc);
     expect(r.valid).toBe(true);
   });
 
   it('每格量低于 minQty 时拒绝，即便名义价值达标', () => {
-    const r = validateBoxAddition(box({ mainGridPortionSize: 1 }), [], 'LONG', { minQty: 0.001, minNotional: 0, stepSize: 0 });
+    const r = validateBoxAddition(box({ mainGridPortionSize: 0.0005 }), [], 'LONG', { minQty: 0.001, minNotional: 0, stepSize: 0 });
     expect(r.valid).toBe(false);
   });
 
@@ -120,51 +120,57 @@ describe('validateBoxAddition — 每格 USDT 名义价值预校验（按箱体�
 
   it('SHORT 箱按其真实最低价（takeProfitPrice 端）校验，而非实时价', () => {
     // SHORT 真实范围 [2200, 2610]（见下方 shortBox 夹具注释），最低价即 takeProfitPrice=2200
-    // 20 USDT 在最低价按 0.01 stepSize 换算后至少需要 22 USDT，20 USDT 拒绝。
+    // 20/2200=0.00909，向上取整到 0.01；0.008 < 0.01 → 拒绝
     const b: BoxSpec = {
       direction: 'SHORT', takeProfitPrice: 2200, mainGridCount: 200, mainGridStep: 2,
-      stopLossGridCount: 4, stopLossGridStep: 2, isolationStep: 2, mainGridPortionSize: 20,
+      stopLossGridCount: 4, stopLossGridStep: 2, isolationStep: 2, mainGridPortionSize: 0.008,
     };
     const r = validateBoxAddition(b, [], 'SHORT', mc);
     expect(r.valid).toBe(false);
-    expect(r.errors.join()).toMatch(/order (size|value)/i);
+    expect(r.errors.join()).toMatch(/order size/i);
   });
 
-  it('按最低价和 stepSize 折算出的实际 USDT 下限必须满足', () => {
+  it('折算出的理论最小值必须按 stepSize 向上取整——防止交易所下单截断后又跌破门槛', () => {
+    // boxLowPrice=1800（2200 - 200×2 主网格深度 400）；20/1800=0.01111（理论最小）。
+    // 0.015 能通过"未取整"的旧校验（0.015×1800=27≥20），但交易所会把 0.015 向下截断到
+    // stepSize=0.01 的整数倍即 0.01，执行时名义价值只有 18＜20——原始生产 bug 会复现。
+    // 正确下限须向上取整到 0.02，0.015 必须被拒绝。
     const b: BoxSpec = {
       direction: 'LONG', takeProfitPrice: 2200, mainGridCount: 200, mainGridStep: 2,
-      stopLossGridCount: 0, stopLossGridStep: 0, isolationStep: 0, mainGridPortionSize: 30,
+      stopLossGridCount: 0, stopLossGridStep: 0, isolationStep: 0, mainGridPortionSize: 0.015,
     };
     const r = validateBoxAddition(b, [], 'LONG', mc);
     expect(r.valid).toBe(false);
-    expect(r.errors.join()).toMatch(/order (size|value)/i);
+    expect(r.errors.join()).toMatch(/order size/i);
   });
 
-  it('达到按最低价折算后的真实 USDT 下限时通过', () => {
+  it('达到 stepSize 向上取整后的真实下限（0.02）时通过', () => {
     const b: BoxSpec = {
       direction: 'LONG', takeProfitPrice: 2200, mainGridCount: 200, mainGridStep: 2,
-      stopLossGridCount: 0, stopLossGridStep: 0, isolationStep: 0, mainGridPortionSize: 40,
+      stopLossGridCount: 0, stopLossGridStep: 0, isolationStep: 0, mainGridPortionSize: 0.02,
     };
     const r = validateBoxAddition(b, [], 'LONG', mc);
     expect(r.valid).toBe(true);
   });
 });
 
-describe('validateBoxAddition — USDT 投入不需要与基础币 stepSize 对齐', () => {
+describe('validateBoxAddition — 每格量须为 stepSize 整数倍（否则每单下单量向下截断会周期性错位，累计持仓与网格线脱节）', () => {
+  // 默认夹具真实最低价 2390，minNotional/minQty 门槛在此远低于 0.015，纯粹测对齐本身。
   const mc = { minQty: 0.001, minNotional: 20, stepSize: 0.01 };
 
-  it('任意满足门槛的 USDT 金额都可以输入', () => {
-    const r = validateBoxAddition(box({ mainGridPortionSize: 30 }), [], 'LONG', mc);
+  it('每格量已过最小下单量门槛，但不是 stepSize 整数倍时仍拒绝（0.015 = 1.5×stepSize）', () => {
+    const r = validateBoxAddition(box({ mainGridPortionSize: 0.015 }), [], 'LONG', mc);
+    expect(r.valid).toBe(false);
+    expect(r.errors.join()).toMatch(/not a multiple of/i);
+  });
+
+  it('每格量是 stepSize 整数倍时通过', () => {
+    const r = validateBoxAddition(box({ mainGridPortionSize: 0.02 }), [], 'LONG', mc);
     expect(r.valid).toBe(true);
   });
 
-  it('更大的 USDT 金额同样通过', () => {
-    const r = validateBoxAddition(box({ mainGridPortionSize: 50 }), [], 'LONG', mc);
-    expect(r.valid).toBe(true);
-  });
-
-  it('stepSize 未提供时仍按最小名义价值校验', () => {
-    const r = validateBoxAddition(box({ mainGridPortionSize: 20 }), [], 'LONG', { minQty: 0.001, minNotional: 20, stepSize: 0 });
+  it('stepSize 未提供（0 或缺失）时跳过对齐校验', () => {
+    const r = validateBoxAddition(box({ mainGridPortionSize: 0.015 }), [], 'LONG', { minQty: 0.001, minNotional: 20, stepSize: 0 });
     expect(r.valid).toBe(true);
   });
 });

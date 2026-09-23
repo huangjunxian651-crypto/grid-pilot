@@ -14,7 +14,6 @@ interface StrategyConfig {
   mainGridCount: number;
   mainGridStep: number;
   mainGridPortionSize: number;
-  mainGridPortionValue?: number;
   direction: 'LONG' | 'SHORT';
   reorderThreshold: number;
   stopLossGridCount: number;
@@ -63,7 +62,7 @@ export class StrategyEngine {
     config: StrategyConfig,
     marketInfo: MarketInfo,
   ): Decision {
-    const { takeProfitPrice, mainGridCount, mainGridStep, mainGridPortionSize, mainGridPortionValue, direction, stopLossGridCount, stopLossGridStep, isolationStep } = config;
+    const { takeProfitPrice, mainGridCount, mainGridStep, mainGridPortionSize, direction, stopLossGridCount, stopLossGridStep, isolationStep } = config;
     const epsilon = config.minQty && config.minQty > 0 ? config.minQty : 1e-8;
     const gtcThreshold = effectiveGtcThreshold({
       gtcThreshold: config.gtcThreshold,
@@ -76,7 +75,6 @@ export class StrategyEngine {
       mainGridCount,
       mainGridStep,
       mainGridPortionSize,
-      mainGridPortionValue,
       stopLossGridCount,
       stopLossGridStep,
       isolationStep,

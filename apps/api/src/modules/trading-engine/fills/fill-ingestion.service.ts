@@ -320,9 +320,6 @@ export class FillIngestionService {
       mainGridCount: (snap?.mainGridCount as number) ?? 0,
       mainGridStep: (snap?.mainGridStep as number) ?? 0,
       mainGridPortionSize: (snap?.mainGridPortionSize as number) ?? 1,
-      ...(typeof snap?.mainGridPortionValue === 'number'
-        ? { mainGridPortionValue: snap.mainGridPortionValue }
-        : {}),
       stopLossGridCount: (snap?.stopLossGridCount as number) ?? 0,
       stopLossGridStep: sls,
       isolationStep: (snap?.isolationStep as number | null) ?? sls,
