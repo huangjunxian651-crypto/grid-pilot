@@ -14,6 +14,7 @@ describe("AuthController", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    delete process.env.COOKIE_SECURE;
 
     authMock = {
       register: vi.fn(),
@@ -42,6 +43,7 @@ describe("AuthController", () => {
 
   afterEach(async () => {
     await app.close();
+    delete process.env.COOKIE_SECURE;
   });
 
   it("POST /auth/register creates user and sets cookie", async () => {
@@ -72,6 +74,36 @@ describe("AuthController", () => {
 
     expect(res.status).toBe(201);
     expect(res.body.user.email).toBe("admin@example.com");
+  });
+
+  it("allows COOKIE_SECURE=false for local HTTP deployments", async () => {
+    process.env.COOKIE_SECURE = "false";
+    authMock.login.mockResolvedValue({
+      token: "session-token",
+      user: { id: "user-1", email: "admin@example.com", displayName: "" },
+    });
+
+    const res = await request(app.getHttpServer())
+      .post("/auth/login")
+      .send({ email: "admin@example.com", password: "password123" });
+
+    expect(res.status).toBe(201);
+    expect(res.headers["set-cookie"][0]).not.toMatch(/; Secure/i);
+  });
+
+  it("allows COOKIE_SECURE=true for HTTPS deployments", async () => {
+    process.env.COOKIE_SECURE = "true";
+    authMock.login.mockResolvedValue({
+      token: "session-token",
+      user: { id: "user-1", email: "admin@example.com", displayName: "" },
+    });
+
+    const res = await request(app.getHttpServer())
+      .post("/auth/login")
+      .send({ email: "admin@example.com", password: "password123" });
+
+    expect(res.status).toBe(201);
+    expect(res.headers["set-cookie"][0]).toMatch(/; Secure/i);
   });
 
   it("POST /auth/logout clears cookie", async () => {

@@ -165,7 +165,12 @@ export class GateioAdapter implements IExchangeAdapter {
     this.environment = credentials.environment ?? "demo";
     this.baseUrl = this.environment === "live" ? GATEIO_REST_LIVE : GATEIO_REST_TESTNET;
 
-    const apiClient = new ApiClient();
+    // The SDK uses the process-wide axios instance by default and has no request
+    // timeout. One stalled Gate request then keeps the signed request queue alive
+    // long enough for later timestamps to expire. Keep this adapter's REST client
+    // bounded so retry creates a fresh signature instead of piling up forever.
+    const apiHttp = axios.create({ timeout: 15_000 });
+    const apiClient = new ApiClient(undefined, apiHttp);
     apiClient.setApiKeySecret(this.apiKey, this.apiSecret);
     (apiClient as any).basePath = this.baseUrl;
     this.client = new FuturesApi(apiClient);
@@ -787,15 +792,24 @@ export class GateioAdapter implements IExchangeAdapter {
     const rawSymbol = toGateioSymbol(symbol);
     const contractSize = await this.getContractSize(symbol);
 
-    const res = await withRetry(
-      () => this.wrapSdkCall(
-        () => this.client.getPosition(GATEIO_SETTLE, rawSymbol),
-        "getPosition",
-      ),
-      {},
-      "fetchPosition",
-    );
-    return this.mapGateioPositionToPosition(res.body, symbol, contractSize);
+    try {
+      const res = await withRetry(
+        () => this.wrapSdkCall(
+          () => this.client.getPosition(GATEIO_SETTLE, rawSymbol),
+          "getPosition",
+        ),
+        {},
+        "fetchPosition",
+      );
+      return this.mapGateioPositionToPosition(res.body, symbol, contractSize);
+    } catch (err) {
+      // Gate's single-position endpoint returns POSITION_NOT_FOUND when the account
+      // has no open position for this contract. Treat that normal cold-start state as 0.
+      if (err instanceof ExchangeError && err.code === "POSITION_NOT_FOUND") {
+        return this.mapGateioPositionToPosition({}, symbol, contractSize);
+      }
+      throw err;
+    }
   }
 
   async fetchBalance(): Promise<Balance> {
@@ -836,13 +850,22 @@ export class GateioAdapter implements IExchangeAdapter {
 
   async fetchMyTrades(symbol: string, sinceMs: number): Promise<OrderFill[]> {
     const contract = toGateioSymbol(symbol);
-    const contractSize = await this.getContractSize(symbol).catch(() => 1);
-    const res = await this.wrapSdkCall(
-      () => this.client.getMyTradesWithTimeRange(GATEIO_SETTLE, {
-        contract,
-        from: sinceMs ? Math.floor(sinceMs / 1000) : undefined,
-      }),
-      'getMyTradesWithTimeRange',
+    let contractSize = 1;
+    const res = await withRetry(
+      async () => {
+        // Keep contract-size lookup inside the retry so a transient REST failure
+        // cannot silently convert fills with the wrong unit.
+        contractSize = await this.getContractSize(symbol);
+        return this.wrapSdkCall(
+          () => this.client.getMyTradesWithTimeRange(GATEIO_SETTLE, {
+            contract,
+            from: sinceMs ? Math.floor(sinceMs / 1000) : undefined,
+          }),
+          'getMyTradesWithTimeRange',
+        );
+      },
+      {},
+      'fetchMyTrades',
     );
     const rows = (res.body ?? []) as unknown as Record<string, unknown>[];
     return rows.map((t) => mapGateRestTrade(t, contractSize)).filter((f): f is OrderFill => f !== null);
@@ -1039,6 +1062,8 @@ export class GateioAdapter implements IExchangeAdapter {
         msg.includes("EPIPE") ||
         msg.includes("EAI_AGAIN") ||
         msg.includes("socket hang up") ||
+        msg.includes("Client network socket disconnected") ||
+        msg.includes("secure TLS connection") ||
         msg.includes("Network Error") ||
         msg.includes("timeout") ||
         msg.includes("Timeout");

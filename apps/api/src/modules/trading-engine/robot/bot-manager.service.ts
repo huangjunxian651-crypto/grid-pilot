@@ -418,6 +418,8 @@ export class BotManagerService implements OnApplicationBootstrap {
     // 活跃箱存在时取未结束 run：既兜底解析 activeSessionCode，又读取 run.state 作为
     // FSM 播种值（Run.state 是 FSM 非终态真相源），修复刷新已运行机器人时 FSM 显示空脱线徽标。
     let activeFsmState: string | null = null;
+    let activeRunPositionQty: number | null = null;
+    let activeRunEntryPrice: number | null = null;
     if (r.activeBoxId) {
       const run = await this.prisma.run.findFirst({
         where: { boxId: r.activeBoxId, endedAt: null },
@@ -425,6 +427,8 @@ export class BotManagerService implements OnApplicationBootstrap {
       });
       activeSessionCode = activeSessionCode ?? run?.runCode ?? null;
       activeFsmState = (run as { state?: string } | null)?.state ?? null;
+      activeRunPositionQty = (run as { pnlSignedPosition?: number } | null)?.pnlSignedPosition ?? null;
+      activeRunEntryPrice = (run as { pnlAvgCost?: number } | null)?.pnlAvgCost ?? null;
     }
     return {
       activeFsmState,
@@ -451,8 +455,10 @@ export class BotManagerService implements OnApplicationBootstrap {
       activeBoxLeverage: (activeBoxRow?.leverage as number | undefined) ?? null,
       stopStage: r.status === 'STOPPING' ? (r.stopStage ?? null) : null,
       stopWarning: r.status === 'STOPPED' ? (r.stopWarning ?? null) : null,
-      lastPositionQty: r.lastPositionQty ?? null,
-      lastEntryPrice: r.lastEntryPrice ?? null,
+      // 活跃机器人也要给详情页一个 REST 后备仓位。WS 断线时前端不能把
+      // 缺失的实时状态误显示成 0；运行台账是当前最后可信的本地值。
+      lastPositionQty: r.lastPositionQty ?? activeRunPositionQty,
+      lastEntryPrice: r.lastEntryPrice ?? activeRunEntryPrice,
       lastUnrealizedPnl: lastUnrealizedPnlDetail,
       lastSnapshotAt: r.lastSnapshotAt ?? null,
       createdAt: r.createdAt ? r.createdAt.toISOString() : '',

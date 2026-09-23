@@ -123,6 +123,20 @@ describe('AccountSnapshotService', () => {
     expect(snap!.positions.length).toBe(0);
   });
 
+  it('保留最近一次可信持仓：交易所查询失败不能发布假 0 仓位', async () => {
+    const adapter = createMockAdapter();
+    service.ensurePolling('cred-1', ['ETH/USDT'], adapter);
+    await service.pollOnce('cred-1');
+    const before = service.getSnapshot('cred-1');
+    expect(before!.positions[0].qty).toBe(0.5);
+
+    (adapter.getPosition as any).mockRejectedValueOnce(new Error('DNS temporarily unavailable'));
+    await service.pollOnce('cred-1');
+
+    const after = service.getSnapshot('cred-1');
+    expect(after!.positions).toEqual(before!.positions);
+  });
+
   it('stopPolling removes snapshot', async () => {
     const adapter = createMockAdapter();
     service.ensurePolling('cred-1', ['ETH/USDT'], adapter);

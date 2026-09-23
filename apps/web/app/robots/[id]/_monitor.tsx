@@ -543,11 +543,31 @@ export function MonitorPanel({ robot, mainSlot }: { robot: RobotDetail; mainSlot
   const live = useMemo(
     // fsm 取值链：WS 实时转换(events.fsm) 优先；为空时用 REST 播种值 robot.activeFsmState，
     // 解决刷新已运行机器人时收不到转换事件、FSM 显示空 `fsm.` 脱线徽标的 bug。
-    () => (range ? buildLiveState(range, robot.activeFsmState ?? "", events, (robotFills?.data ?? []) as FillRecord[], null, robot.latestPrice, robotFills?.boxes) : null),
+    () => {
+      if (!range) return null;
+      // WS 断线/尚未收到 status 时，使用详情 REST 返回的最后可信台账仓位，
+      // 避免 `liveStatus ?? 0` 把真实空头仓位渲染成 0.000。
+      const restPosition = robot.lastPositionQty != null
+        ? ({
+            positionQty: robot.lastPositionQty,
+            entryPrice: robot.lastEntryPrice ?? undefined,
+            unrealizedPnl: robot.lastUnrealizedPnl ?? undefined,
+          } as BotStatus)
+        : null;
+      return buildLiveState(
+        range,
+        robot.activeFsmState ?? "",
+        events,
+        (robotFills?.data ?? []) as FillRecord[],
+        restPosition,
+        robot.latestPrice,
+        robotFills?.boxes,
+      );
+    },
     // 依赖 events 的具体字段而非每渲染都重建的包装对象(useBotEvents 返回 {connected, ...state}),
     // 避免父组件轮询重渲染时无谓重算 buildLiveState。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [range, events.price, events.fsm, events.fills, events.liveStatus, robot.activeFsmState, robotFills],
+    [range, events.price, events.fsm, events.fills, events.liveStatus, robot.activeFsmState, robot.lastPositionQty, robot.lastEntryPrice, robot.lastUnrealizedPnl, robotFills],
   );
   const prediction = useMemo<PredictResult | null>(() => {
     if (!range || !live) return null;

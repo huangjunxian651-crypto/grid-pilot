@@ -334,8 +334,20 @@ export class GridBotRunner {
 
     await this.ensureOneWayPositionMode();
 
-    await this.adapter.setLeverage(this.config.symbol, this.config.leverage);
-    this.logger.log(`[${this.config.runCode}] Leverage set to ${this.config.leverage}x`);
+    // Existing exchange positions already have live margin/leverage settings. Gate.io
+    // rejects changing leverage on a cross-margin position when free balance is low;
+    // keep that exchange setting and continue managing the position instead of making
+    // activation fail before the first grid order.
+    const hasExistingPosition = Math.abs(this.position?.baseAssetQty ?? 0) > 1e-12;
+    if (hasExistingPosition) {
+      this.logger.warn(
+        `[${this.config.runCode}] Existing position detected; keeping exchange leverage ` +
+        `(${this.position?.leverage ?? "unknown"}x) instead of setting ${this.config.leverage}x`,
+      );
+    } else {
+      await this.adapter.setLeverage(this.config.symbol, this.config.leverage);
+      this.logger.log(`[${this.config.runCode}] Leverage set to ${this.config.leverage}x`);
+    }
 
     try {
       await this.adapter.setMarginMode(this.config.symbol, true);

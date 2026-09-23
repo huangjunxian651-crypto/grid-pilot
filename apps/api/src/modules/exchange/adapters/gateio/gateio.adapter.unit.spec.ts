@@ -171,6 +171,46 @@ describe("GateioAdapter", () => {
     expect(pos.qty).toBe(0);
   });
 
+  it("fetchPosition treats Gate POSITION_NOT_FOUND as an empty position", async () => {
+    nock(BASE_URL)
+      .get("/futures/usdt/contracts/XAUT_USDT")
+      .reply(200, {
+        name: "XAUT_USDT",
+        quanto_multiplier: "0.001",
+      });
+
+    nock(BASE_URL)
+      .get("/futures/usdt/positions/XAUT_USDT")
+      .reply(400, { label: "POSITION_NOT_FOUND", message: "Position not found" });
+
+    const pos = await adapter.fetchPosition("XAUT/USDT");
+    expect(pos).toMatchObject({
+      symbol: "XAUT/USDT",
+      side: "none",
+      qty: 0,
+      avgCost: 0,
+      unrealizedPnl: 0,
+    });
+  });
+
+  it("fetchMyTrades retries a transient TLS/network failure", async () => {
+    nock(BASE_URL)
+      .get("/futures/usdt/contracts/ETH_USDT")
+      .reply(200, { name: "ETH_USDT", quanto_multiplier: "0.001" });
+
+    nock(BASE_URL)
+      .get("/futures/usdt/my_trades_timerange")
+      .query({ contract: "ETH_USDT", from: "1000" })
+      .replyWithError("Client network socket disconnected before secure TLS connection was established");
+
+    nock(BASE_URL)
+      .get("/futures/usdt/my_trades_timerange")
+      .query({ contract: "ETH_USDT", from: "1000" })
+      .reply(200, []);
+
+    await expect(adapter.fetchMyTrades("ETH/USDT", 1_000_000)).resolves.toEqual([]);
+  });
+
   // ── fetchBalance ──────────────────────────────────────────────
 
   it("fetchBalance returns balance", async () => {

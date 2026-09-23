@@ -15,6 +15,8 @@ export class FillReconcileService {
   private readonly consecutiveFailures = new Map<string, number>();
   /** 本轮故障是否已经告警过，成功一次即清除，允许下一轮独立故障重新告警。 */
   private readonly alertedFailures = new Set<string>();
+  /** cold-start、定时 sweep 和成交触发可能同时进入；同一 run 只保留一轮 REST 对账。 */
+  private readonly inFlight = new Map<string, Promise<{ newFillsCount: number }>>();
   private static readonly FAILURE_ALERT_THRESHOLD = 5;
 
   constructor(
@@ -26,6 +28,23 @@ export class FillReconcileService {
   /** 拉取该 run 自最后一笔成交以来的交易所逐笔成交，逐笔幂等 ingest（补漏 / 关闭 order-before-fill 窗口）。
    * 返回本次新落库的成交数，供手动触发入口向用户展示"补了几笔"。 */
   async reconcileRun(runCode: string, symbol: string, adapter: ExchangeAdapter): Promise<{ newFillsCount: number }> {
+    const existing = this.inFlight.get(runCode);
+    if (existing) return existing;
+
+    const work = this.reconcileRunOnce(runCode, symbol, adapter);
+    this.inFlight.set(runCode, work);
+    try {
+      return await work;
+    } finally {
+      if (this.inFlight.get(runCode) === work) this.inFlight.delete(runCode);
+    }
+  }
+
+  private async reconcileRunOnce(
+    runCode: string,
+    symbol: string,
+    adapter: ExchangeAdapter,
+  ): Promise<{ newFillsCount: number }> {
     const run = await this.prisma.run.findUnique({ where: { runCode } });
     if (!run) return { newFillsCount: 0 };
     const last = await this.prisma.fill.findFirst({

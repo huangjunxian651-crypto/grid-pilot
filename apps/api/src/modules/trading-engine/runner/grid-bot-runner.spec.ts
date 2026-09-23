@@ -196,6 +196,15 @@ describe('GridBotRunner', () => {
       expect(runner.getState()).toBeTruthy();
     });
 
+    it('existing position keeps exchange leverage instead of resetting it', async () => {
+      const state = createInitialState();
+      state.position = { symbol: 'ETH/USDT', baseAssetQty: 0.01, quoteAssetQty: -20, entryPrice: 2000, leverage: 20, marginType: 'CROSS' };
+
+      await startRunner(runner, adapter, deps, state);
+
+      expect(adapter.setLeverage).not.toHaveBeenCalled();
+    });
+
     it('账户处于对冲模式时，启动切回单向模式——否则 OKX 每单必拒 "Parameter posSide error"', async () => {
       // 2026-08-04 生产事故：OKX 账户为 long_short_mode，下单必须带 posSide，
       // 而全代码库（三个适配器）都按单向模式设计、从不发 posSide，导致该机器人

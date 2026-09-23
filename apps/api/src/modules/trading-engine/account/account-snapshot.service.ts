@@ -24,6 +24,8 @@ export class AccountSnapshotService implements OnModuleDestroy {
   private snapshots = new Map<string, AccountSnapshot>();
   private adapters = new Map<string, { adapter: ExchangeAdapter; symbols: string[] }>();
   private intervals = new Map<string, ReturnType<typeof setInterval>>();
+  /** Prevent a slow exchange request from multiplying every 10s tick. */
+  private pollInFlight = new Map<string, Promise<void>>();
   private readonly POLL_INTERVAL_MS = 10_000;
   /** 权益时序落库节流：每 credential 最多 5 分钟一行（P2-1 权益曲线数据源）。 */
   private static readonly PERSIST_INTERVAL_MS = 5 * 60_000;
@@ -44,6 +46,7 @@ export class AccountSnapshotService implements OnModuleDestroy {
     }
     this.adapters.delete(credentialId);
     this.snapshots.delete(credentialId);
+    this.pollInFlight.delete(credentialId);
   }
 
   /**
@@ -112,7 +115,7 @@ export class AccountSnapshotService implements OnModuleDestroy {
   ): Promise<AccountSnapshot> {
     const [balance, ...positions] = await Promise.all([
       adapter.getBalance(),
-      ...symbols.map((s) => adapter.getPosition(s).catch(() => null)),
+      ...symbols.map((s) => adapter.getPosition(s)),
     ]);
 
     return this.buildSnapshot(credentialId, balance, positions);
@@ -151,11 +154,29 @@ export class AccountSnapshotService implements OnModuleDestroy {
   async pollOnce(credentialId: string): Promise<void> {
     const entry = this.adapters.get(credentialId);
     if (!entry) return;
+    const existing = this.pollInFlight.get(credentialId);
+    if (existing) return existing;
+
+    const work = this.pollOnceInternal(credentialId);
+    this.pollInFlight.set(credentialId, work);
+    try {
+      await work;
+    } finally {
+      if (this.pollInFlight.get(credentialId) === work) this.pollInFlight.delete(credentialId);
+    }
+  }
+
+  private async pollOnceInternal(credentialId: string): Promise<void> {
+    const entry = this.adapters.get(credentialId);
+    if (!entry) return;
 
     try {
       const [balance, ...positions] = await Promise.all([
         entry.adapter.getBalance(),
-        ...entry.symbols.map((s) => entry.adapter.getPosition(s).catch(() => null)),
+        // A transient position-query failure must not be converted into an empty
+        // position list.  That would publish a false 0 position and overwrite the
+        // last trusted snapshot while the exchange is unreachable.
+        ...entry.symbols.map((s) => entry.adapter.getPosition(s)),
       ]);
 
       const snapshot = this.buildSnapshot(credentialId, balance, positions);

@@ -67,6 +67,11 @@ const apiUrl = process.env.API_URL ?? "http://localhost:3301";
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  // Middleware runs in Next's edge bundle and otherwise may inline the fallback
+  // localhost URL instead of the Docker-internal API target at build time.
+  env: {
+    API_URL: apiUrl,
+  },
   outputFileTracingRoot: path.resolve(__dirname, "../.."),
   turbopack: {
     // pnpm 虚拟包存储在 monorepo 根的 node_modules/.pnpm，需要将 root 指向此处

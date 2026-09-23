@@ -31,6 +31,9 @@ interface WsMessage {
 }
 
 export class GateioWsClient extends ReconnectingWsClient {
+  /** Gate futures WS clock is observed ~2s behind the container clock; keep login
+   * timestamps safely on the server side of the 60s acceptance window. */
+  private static readonly WS_SERVER_SKEW_MS = 3_000;
   private apiKey: string;
   private apiSecret: string;
   private url: string;
@@ -103,17 +106,12 @@ export class GateioWsClient extends ReconnectingWsClient {
   async authenticate(): Promise<void> {
     if (this.isAuthenticated) return;
 
-    const timestamp = Math.floor(Date.now() / 1000);
-    const timestampStr = timestamp.toString();
-    // Gate.io WS API 登录签名（已 testnet 验证 2026-06-04）：
-    // signString = `${event}\n${channel}\n${reqParam}\n${timestamp}`，futures.login 无参数→reqParam 为空串。
-    // 旧的 `channel=...&event=...&time=...` 格式会报 Signature mismatch。
-    const signString = `api\nfutures.login\n\n${timestampStr}`;
-    const signature = createHmac("sha512", this.apiSecret)
-      .update(signString)
-      .digest("hex");
-
     return new Promise((resolve, reject) => {
+      // Generate the timestamp once per login attempt, immediately before the
+      // listeners and send are assembled.
+      const timestamp = Math.floor((Date.now() - GateioWsClient.WS_SERVER_SKEW_MS) / 1000);
+      const timestampStr = timestamp.toString();
+
       // 三个出口(成功/失败/超时)都要清理另两个监听器,否则每轮失败的鉴权重试都会泄漏一对
       const cleanup = () => {
         clearTimeout(timeout);
@@ -145,6 +143,13 @@ export class GateioWsClient extends ReconnectingWsClient {
       this.once("login", onAuth);
       this.once("loginError", onError);
 
+      // Gate.io WS API login signature:
+      // `${event}\n${channel}\n${reqParam}\n${timestamp}`; login has no req_param.
+      const signString = `api\nfutures.login\n\n${timestampStr}`;
+      const signature = createHmac("sha512", this.apiSecret)
+        .update(signString)
+        .digest("hex");
+
       // 根据官方文档格式发送认证请求
       this.send({
         time: timestamp,
@@ -153,7 +158,6 @@ export class GateioWsClient extends ReconnectingWsClient {
         event: "api",
         payload: {
           req_id: `auth_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          req_header: { "X-Gate-Channel-Id": "apiv4-ws" },
           api_key: this.apiKey,
           signature,
           timestamp: timestampStr,
