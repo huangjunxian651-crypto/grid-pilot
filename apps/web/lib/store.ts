@@ -48,6 +48,7 @@ export interface RangeConfig {
   mainGridCount: number;
   mainGridStep: number;
   mainGridPortionSize: number;
+  mainGridPortionValue?: number;
   stopLossGridCount: number;
   stopLossGridStep: number;
   isolationStep: number;

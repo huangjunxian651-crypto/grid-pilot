@@ -1,4 +1,4 @@
-import { toPrice } from '@gridpilot/shared-types';
+import { mainGridCumulativeQuantity, toPrice } from '@gridpilot/shared-types';
 import type { BoxTargetConfig as TargetPositionConfig } from '@gridpilot/shared-types';
 
 export interface FillSavingsInput {
@@ -42,8 +42,7 @@ export function computeFillSavings(input: FillSavingsInput): FillSavingsResult {
   // 进场市价建仓与关闭平仓都不是网格买卖往返：传统网格进出场也会做同样的市价操作，
   // 不存在「相对网格线的额外价差」，故不计超额收益（savings/网格价均归 0，前端显示「—」）。
   if (input.isEntry || input.orderType === 'CLOSE') return ZERO;
-  const portion = config.mainGridPortionSize;
-  if (!(portion > 0) || !(thisFillQty > EPS)) return ZERO;
+  if (!(config.mainGridPortionSize > 0) || !(thisFillQty > EPS)) return ZERO;
 
   const isAdd =
     (config.direction === 'LONG' && side === 'BUY') ||
@@ -57,22 +56,20 @@ export function computeFillSavings(input: FillSavingsInput): FillSavingsResult {
   // 本笔成交把持仓推到的幅度。
   const endMag = isAdd ? startMag + thisFillQty : Math.max(0, startMag - thisFillQty);
 
-  // 以 portion 为单位的持仓区间 [lo, hi]（无方向，纯幅度）。
-  const lo = Math.min(startMag, endMag) / portion;
-  const hi = Math.max(startMag, endMag) / portion;
+  // 以每个网格的实际基础币数量为边界。USDT 模式下每格数量随该网格价格变化，
+  // 不能再用「持仓 ÷ 固定 portion」反推格数。
+  const lo = Math.min(startMag, endMag);
+  const hi = Math.max(startMag, endMag);
   if (!(hi - lo > EPS)) return ZERO;
 
   let weightedSum = 0;
   let takenWeight = 0;
-  const firstCell = Math.floor(lo + EPS);
-  const lastCell = Math.ceil(hi - EPS) - 1;
-  for (let cell = firstCell; cell <= lastCell; cell++) {
-    const cellLo = Math.max(lo, cell);
-    const cellHi = Math.min(hi, cell + 1);
-    const weight = cellHi - cellLo;
+  for (let cell = 0; cell < config.mainGridCount; cell++) {
+    const gridLo = mainGridCumulativeQuantity(config, cell);
+    const gridHi = mainGridCumulativeQuantity(config, cell + 1);
+    const weight = Math.min(hi, gridHi) - Math.max(lo, gridLo);
     if (weight <= EPS) continue;
     // 仅主网格内的格参与归属（隔离/止损区几何不同，暂不归属）。
-    if (cell < 0 || cell >= config.mainGridCount) continue;
     const depth = (isAdd ? cell + 1 : cell) * config.mainGridStep;
     const line = toPrice(depth, config);
     weightedSum += line * weight;

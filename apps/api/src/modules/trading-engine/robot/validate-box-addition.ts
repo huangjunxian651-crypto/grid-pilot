@@ -1,9 +1,7 @@
 import {
   deriveBoxLines,
   validateBoxGeometry,
-  minOrderSizeRequirement,
-  isStepAligned,
-  nearestStepAlignedValue,
+  minOrderValueRequirement,
   type BoxGeometryConfig,
   type OrderSizeConstraints,
 } from '@gridpilot/shared-types';
@@ -67,28 +65,16 @@ export function validateBoxAddition(
 
   const nb = deriveBoxLines(toGeometry(newBox));
 
-  // 2.5 最小下单量：按箱体真实最低价（nb.boxLowPrice）折算名义价值，不用实时价，再按
-  // stepSize 向上取整（交易所下单会把数量向下截断到 stepSize 整数倍，不取整则用户填入的
-  // 值即便过了未取整的理论最小值，截断后名义价值仍可能跌破门槛）。见 minOrderSizeRequirement。
+  // 2.5 最小下单量：输入值现在是每格 USDT 名义价值；按箱体最低价校验，即使
+  // 价格走到箱体底部，换算成基础币数量并按 stepSize 截断后仍能通过交易所门槛。
   if (marketConstraints && newBox.mainGridPortionSize != null && newBox.mainGridPortionSize > 0) {
-    const portionSize = newBox.mainGridPortionSize;
-    const minRequired = minOrderSizeRequirement(nb.boxLowPrice, marketConstraints);
-    if (portionSize < minRequired) {
+    const portionValue = newBox.mainGridPortionSize;
+    const minRequired = minOrderValueRequirement(nb.boxLowPrice, marketConstraints);
+    if (portionValue < minRequired) {
       errors.push(
-        `order size ${portionSize} below exchange minimum at box low price ${nb.boxLowPrice} ` +
+        `order value ${portionValue} USDT below exchange minimum at box low price ${nb.boxLowPrice} ` +
           `(minQty=${marketConstraints.minQty}, minNotional=${marketConstraints.minNotional}, ` +
           `stepSize=${marketConstraints.stepSize}, suggested>=${minRequired})`,
-      );
-    }
-    // 每格量须为 stepSize 整数倍：策略引擎按「目标持仓(格数×portionSize) − 实际持仓」下单，
-    // 下单量向 stepSize 截断；若 portionSize 本身不是 stepSize 整数倍，奇偶网格档位会周期性
-    // 截掉半个 stepSize，导致累计持仓与网格线脱节，avg-grid-price 按持仓反推的归属线跨格
-    // 加权到错误的价格，产生虚假的负「Alpha 超额」（非真实滑点损失，是统计口径错位）。
-    const { stepSize } = marketConstraints;
-    if (!isStepAligned(portionSize, stepSize)) {
-      errors.push(
-        `order size ${portionSize} is not a multiple of exchange stepSize ${stepSize} ` +
-          `(nearest valid value ${nearestStepAlignedValue(portionSize, stepSize)})`,
       );
     }
   }

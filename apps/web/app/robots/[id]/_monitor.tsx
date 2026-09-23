@@ -8,7 +8,7 @@ import { useRobotFills, useRobotFillsPaged } from "@/lib/hooks/useBots";
 import { Modal } from "@/components/ui/modal";
 // useQueryClient 已移除：WS 不再触发全量重拉
 import { type RangeConfig, type LiveState, type PredictResult, fmt, deriveLayout, predictActions, boxLabel } from "@/lib/store";
-import { computeTargetPosition, deriveBoxLines } from "@gridpilot/shared-types";
+import { computeTargetPosition, deriveBoxLines, mainGridCumulativeQuantity } from "@gridpilot/shared-types";
 import { type BotStatus, type FillRecord, type RobotDetail, type RobotBox, type BoxGeometry } from "@/lib/api";
 import { KPI, PriceTicker, Badge, Card, FsmPill, Pulse } from "@/components/ui/primitives";
 import { TermHelp } from "@/components/ui/term-help";
@@ -30,6 +30,7 @@ export function boxToRangeConfig(box: RobotBox, robot: { symbol: string; directi
     mainGridCount: box.mainGridCount,
     mainGridStep: box.mainGridStep,
     mainGridPortionSize: box.mainGridPortionSize,
+    mainGridPortionValue: box.mainGridPortionSize,
     stopLossGridCount: box.stopLossGridCount ?? 4,
     stopLossGridStep: box.stopLossGridStep ?? 2.5,
     isolationStep: box.isolationStep ?? box.stopLossGridStep ?? 2.5,
@@ -64,7 +65,7 @@ function buildLiveState(
     side: (f.eventData.side ?? "BUY").toLowerCase() as "buy" | "sell",
     gridIndex: f.eventData.gridIndex ?? -1,
     price: f.eventData.fillPrice ?? price,
-    qty: f.eventData.fillQty ?? range.mainGridPortionSize,
+    qty: f.eventData.fillQty ?? (range.mainGridPortionValue != null ? range.mainGridPortionValue / Math.max(f.eventData.fillPrice ?? price, 1) : range.mainGridPortionSize),
     route: "POC" as const,
     fee: f.eventData.fee ?? 0,
     feeAsset: f.eventData.feeAsset,
@@ -83,6 +84,7 @@ function buildLiveState(
     mainGridCount: range.mainGridCount,
     mainGridStep: range.mainGridStep,
     mainGridPortionSize: range.mainGridPortionSize,
+    mainGridPortionValue: range.mainGridPortionSize,
     stopLossGridCount: range.stopLossGridCount ?? 0,
     stopLossGridStep: range.stopLossGridStep ?? 0,
     isolationStep: range.isolationStep ?? 0,
@@ -129,7 +131,12 @@ function PositionPanel({ range, live, realizedPnl, t, compact }: { range: RangeC
   const absQty = Math.abs(live.positionQty);
   const positionValue = absQty * live.price;
   const unrealizedPnl = live.unrealizedPnl;
-  const filledGrids = Math.round(absQty / range.mainGridPortionSize);
+  let filledGrids = 0;
+  for (let i = 1; i <= range.mainGridCount; i++) {
+    const targetQty = mainGridCumulativeQuantity(range, i);
+    if (absQty + 1e-9 >= targetQty) filledGrids = i;
+    else break;
+  }
   const fillPct = filledGrids / range.mainGridCount;
   const lev = live.actualLeverage || range.leverage;
 
@@ -576,6 +583,7 @@ export function MonitorPanel({ robot, mainSlot }: { robot: RobotDetail; mainSlot
       mainGridCount: range.mainGridCount,
       mainGridStep: range.mainGridStep,
       mainGridPortionSize: range.mainGridPortionSize,
+      mainGridPortionValue: range.mainGridPortionSize,
       stopLossGridCount: range.stopLossGridCount,
       stopLossGridStep: range.stopLossGridStep,
       isolationStep: range.isolationStep,

@@ -87,26 +87,23 @@ describe("box-form-model", () => {
   });
 
   it("boxFormErrors：每格量在箱体最低价上仍满足 minNotional 时不报 orderSize 错误", () => {
-    // 0.05 × 2390 = 119.5 ≥ 20
+    // 每格投入 50 USDT，按最低价换算后仍高于交易所门槛。
     const v = { ...emptyBoxFormValue(), takeProfitPrice: "2800", mainGridCount: "200",
-      mainGridStep: "2", stopLossGridStep: "2", mainGridPortionSize: "0.05" };
+      mainGridStep: "2", stopLossGridStep: "2", mainGridPortionSize: "50" };
     const errs = boxFormErrors(v, "LONG", { minQty: 0.001, minNotional: 20, stepSize: 0.01 });
     expect(errs.orderSize).toBeNull();
   });
 
-  it("boxFormErrors：理论最小值须按 stepSize 向上取整——防止交易所下单截断后又跌破门槛", () => {
-    // takeProfitPrice=2200, count=200, step=2 → boxLowPrice=1800；20/1800=0.01111（理论最小）。
-    // 0.015 能通过未取整的旧校验（0.015×1800=27≥20），但交易所会把 0.015 向下截断到
-    // stepSize=0.01 的整数倍即 0.01，执行时名义价值只有 18＜20——必须拒绝。
+  it("boxFormErrors：每格投入低于 USDT 最小名义价值时拒绝", () => {
     const v = { ...emptyBoxFormValue(), takeProfitPrice: "2200", mainGridCount: "200",
-      mainGridStep: "2", stopLossGridCount: "0", stopLossGridStep: "0", mainGridPortionSize: "0.015" };
+      mainGridStep: "2", stopLossGridCount: "0", stopLossGridStep: "0", mainGridPortionSize: "20" };
     const errs = boxFormErrors(v, "LONG", { minQty: 0.001, minNotional: 20, stepSize: 0.01 });
     expect(errs.orderSize?.key).toBe("robot.order_size_below_minimum");
   });
 
-  it("boxFormErrors：达到 stepSize 向上取整后的真实下限（0.02）时通过", () => {
+  it("boxFormErrors：达到按最低价折算后的真实 USDT 下限时通过", () => {
     const v = { ...emptyBoxFormValue(), takeProfitPrice: "2200", mainGridCount: "200",
-      mainGridStep: "2", stopLossGridCount: "0", stopLossGridStep: "0", mainGridPortionSize: "0.02" };
+      mainGridStep: "2", stopLossGridCount: "0", stopLossGridStep: "0", mainGridPortionSize: "40" };
     const errs = boxFormErrors(v, "LONG", { minQty: 0.001, minNotional: 20, stepSize: 0.01 });
     expect(errs.orderSize).toBeNull();
   });
@@ -118,18 +115,16 @@ describe("box-form-model", () => {
     expect(errs.orderSize).toBeNull();
   });
 
-  it("boxFormErrors：每格量已过最小下单量门槛，但不是 stepSize 整数倍时返回对齐错误（0.015=1.5×stepSize）", () => {
-    // boxLowPrice=2390；0.015×2390=35.85≥20（过 minNotional），minRequired=0.01（0.015 也 ≥），
-    // 但 0.015 不是 stepSize=0.01 的整数倍——策略引擎每单量向 stepSize 截断会周期性错位。
+  it("boxFormErrors：USDT 投入不要求是基础币 stepSize 的整数倍", () => {
     const v = { ...emptyBoxFormValue(), takeProfitPrice: "2800", mainGridCount: "200",
-      mainGridStep: "2", stopLossGridStep: "2", mainGridPortionSize: "0.015" };
+      mainGridStep: "2", stopLossGridStep: "2", mainGridPortionSize: "30" };
     const errs = boxFormErrors(v, "LONG", { minQty: 0.001, minNotional: 20, stepSize: 0.01 });
-    expect(errs.orderSize?.key).toBe("robot.order_size_not_step_aligned");
+    expect(errs.orderSize).toBeNull();
   });
 
-  it("boxFormErrors：每格量是 stepSize 整数倍时不报对齐错误", () => {
+  it("boxFormErrors：较大的 USDT 投入正常通过", () => {
     const v = { ...emptyBoxFormValue(), takeProfitPrice: "2800", mainGridCount: "200",
-      mainGridStep: "2", stopLossGridStep: "2", mainGridPortionSize: "0.02" };
+      mainGridStep: "2", stopLossGridStep: "2", mainGridPortionSize: "50" };
     const errs = boxFormErrors(v, "LONG", { minQty: 0.001, minNotional: 20, stepSize: 0.01 });
     expect(errs.orderSize).toBeNull();
   });

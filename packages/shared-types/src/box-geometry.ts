@@ -22,7 +22,10 @@ export interface BoxGeometryConfig extends DirectionAnchor {
 }
 
 export interface BoxTargetConfig extends BoxGeometryConfig {
+  /** 兼容旧配置：未提供时 mainGridPortionSize 仍表示基础币数量。 */
   mainGridPortionSize: number;
+  /** 新配置：每个主网格的 USDT 名义价值；运行时按对应网格价换算基础币数量。 */
+  mainGridPortionValue?: number;
 }
 
 export function toDistance(price: number, anchor: DirectionAnchor): number {
@@ -91,6 +94,28 @@ export interface BoxTargetPosition {
 
 const FLOOR_EPSILON = 1e-9;
 
+/** 单个主网格在指定网格索引上的基础币数量。index=1 表示第一笔开仓网格。 */
+export function mainGridPortionQuantity(config: BoxTargetConfig, gridIndex: number): number {
+  if (gridIndex <= 0) return 0;
+  const value = config.mainGridPortionValue;
+  if (value != null && value > 0) {
+    const gridPrice = toPrice(gridIndex * config.mainGridStep, config);
+    return gridPrice > 0 ? value / gridPrice : 0;
+  }
+  return config.mainGridPortionSize;
+}
+
+/** 累计到指定主网格数量的基础币持仓。 */
+export function mainGridCumulativeQuantity(config: BoxTargetConfig, gridCount: number): number {
+  const count = Math.max(0, Math.min(config.mainGridCount, Math.floor(gridCount)));
+  if (!(config.mainGridPortionValue != null && config.mainGridPortionValue > 0)) {
+    return count * config.mainGridPortionSize;
+  }
+  let total = 0;
+  for (let i = 1; i <= count; i++) total += mainGridPortionQuantity(config, i);
+  return total;
+}
+
 /**
  * 统一仓位计算（d 空间单实现）。
  * 行为基线：与旧 computeLong（apps/api strategy/compute-target-position.ts）逐点一致；
@@ -109,7 +134,7 @@ export function computeTargetPosition(
     stopLossGridCount,
     stopLossGridStep,
   } = config;
-  const baseSize = mainGridCount * mainGridPortionSize;
+  const baseSize = mainGridCumulativeQuantity(config, mainGridCount);
   const stopLossPortionSize =
     stopLossGridCount > 0 ? baseSize / stopLossGridCount : 0;
 
@@ -126,10 +151,10 @@ export function computeTargetPosition(
   } else if (stopLossGridCount > 0) {
     if (d <= lines.isolationEndDepth) {
       const grids = Math.floor(d / mainGridStep + FLOOR_EPSILON);
-      targetBoughtSize = Math.min(mainGridCount, grids) * mainGridPortionSize;
+      targetBoughtSize = mainGridCumulativeQuantity(config, Math.min(mainGridCount, grids));
       targetHoldSize =
         d < lines.mainGridDepth
-          ? Math.max(0, grids + 1) * mainGridPortionSize
+          ? mainGridCumulativeQuantity(config, Math.max(0, grids + 1))
           : baseSize;
       gridIndex = grids;
       zone = d < lines.mainGridDepth ? "MAIN" : "ISOLATION";
@@ -151,8 +176,8 @@ export function computeTargetPosition(
   } else {
     if (d <= lines.boxDepth) {
       const grids = Math.floor(d / mainGridStep + FLOOR_EPSILON);
-      targetBoughtSize = Math.min(mainGridCount, grids) * mainGridPortionSize;
-      targetHoldSize = Math.max(0, grids + 1) * mainGridPortionSize;
+      targetBoughtSize = mainGridCumulativeQuantity(config, Math.min(mainGridCount, grids));
+      targetHoldSize = mainGridCumulativeQuantity(config, Math.max(0, grids + 1));
       gridIndex = grids;
       zone = d < lines.mainGridDepth ? "MAIN" : "ISOLATION";
     } else {
@@ -423,6 +448,16 @@ export function minOrderSizeRequirement(
   return rawMin;
 }
 
+/** USDT 名义价值模式下，每格在箱体最低价仍能满足交易所最小下单规则的最低投入。 */
+export function minOrderValueRequirement(
+  boxLowPrice: number,
+  constraints: OrderSizeConstraints,
+): number {
+  if (!(boxLowPrice > 0)) return 0;
+  const minQty = minOrderSizeRequirement(boxLowPrice, constraints);
+  return Math.max(constraints.minNotional, minQty * boxLowPrice);
+}
+
 // ── 动作预测（d 空间单实现） ─────────────────────────────────────
 
 export interface PredictAction {
@@ -460,7 +495,7 @@ export function predictActions(input: PredictInput): PredictResult {
     price,
   } = input;
   const lines = deriveBoxLines(input);
-  const baseSize = mainGridCount * mainGridPortionSize;
+  const baseSize = mainGridCumulativeQuantity(input, mainGridCount);
   const stopLossPortionSize =
     stopLossGridCount > 0 ? baseSize / stopLossGridCount : 0;
   const eps = 1e-8;
@@ -486,10 +521,10 @@ export function predictActions(input: PredictInput): PredictResult {
       };
     }
     const grids = Math.floor(d / mainGridStep + FLOOR_EPSILON);
-    const tB = Math.min(mainGridCount, grids) * mainGridPortionSize;
+    const tB = mainGridCumulativeQuantity(input, Math.min(mainGridCount, grids));
     const tH =
       d < lines.mainGridDepth - eps
-        ? Math.max(0, grids + 1) * mainGridPortionSize
+        ? mainGridCumulativeQuantity(input, Math.max(0, grids + 1))
         : baseSize;
     return { tB, tH };
   };

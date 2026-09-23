@@ -102,6 +102,21 @@ describe("deriveBoxLines", () => {
 const LONG_TARGET: BoxTargetConfig = { ...LONG_CONFIG, mainGridPortionSize: 1 };
 const SHORT_TARGET: BoxTargetConfig = { ...SHORT_CONFIG, mainGridPortionSize: 1 };
 
+it("USDT 模式按各网格价格换算基础币数量", () => {
+  const config: BoxTargetConfig = {
+    ...LONG_CONFIG,
+    mainGridCount: 2,
+    stopLossGridCount: 0,
+    mainGridPortionSize: 0,
+    mainGridPortionValue: 100,
+  };
+  const firstGridPrice = toPrice(10, config);
+  const secondGridPrice = toPrice(20, config);
+  const result = computeTargetPosition(firstGridPrice, config);
+  expect(result.targetBoughtSize).toBeCloseTo(100 / firstGridPrice, 10);
+  expect(result.targetHoldSize).toBeCloseTo(100 / firstGridPrice + 100 / secondGridPrice, 10);
+});
+
 describe("computeTargetPosition - LONG 回归（数值与旧 computeLong 逐点一致）", () => {
   // 旧实现基线：apps/api/src/modules/trading-engine/strategy/compute-target-position.ts computeLong
   // takeProfitPrice=2800 count=10 step=10 portion=1 slCount=4 slStep=5 iso=10

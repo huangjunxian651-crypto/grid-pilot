@@ -51,6 +51,7 @@ export function BoxForm({
         mainGridCount: parseInt(value.mainGridCount, 10),
         mainGridStep: Number(value.mainGridStep),
         mainGridPortionSize: Number(value.mainGridPortionSize) || 0,
+        mainGridPortionValue: Number(value.mainGridPortionSize) || 0,
         stopLossGridCount: parseInt(value.stopLossGridCount, 10),
         stopLossGridStep: slStep,
         isolationStep,
@@ -79,7 +80,7 @@ export function BoxForm({
           <Field label={t("robot.field_grid_count")} value={value.mainGridCount} onChange={(x) => set({ mainGridCount: x })} placeholder="200" />
           <Field label={t("robot.field_grid_step")} value={value.mainGridStep} onChange={(x) => set({ mainGridStep: x })} placeholder="2" />
           <div>
-            <Field label={t("robot.field_portion")} value={value.mainGridPortionSize} onChange={(x) => set({ mainGridPortionSize: x })} placeholder="0.05" />
+            <Field label={t("robot.field_portion")} value={value.mainGridPortionSize} onChange={(x) => set({ mainGridPortionSize: x })} placeholder="50" />
             {layout && errs.orderSize && <div style={{ fontSize: 11, color: "var(--down)", marginTop: 4 }}>{t(errs.orderSize.key, errs.orderSize.params)}</div>}
           </div>
           <Field label={t("robot.cfg_leverage")} value={value.leverage} onChange={(x) => set({ leverage: x })} placeholder="20" />

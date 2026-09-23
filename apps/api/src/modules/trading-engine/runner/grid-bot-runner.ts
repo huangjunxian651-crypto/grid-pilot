@@ -26,6 +26,7 @@ import {
   toDistance,
   toPrice,
   deriveBoxLines,
+  mainGridCumulativeQuantity,
   validateBoxGeometry,
   type BoxDirection,
   type BoxTargetConfig as TargetPositionConfig,
@@ -43,7 +44,9 @@ export interface BotConfig {
   takeProfitPrice: number;
   mainGridCount: number;
   mainGridStep: number;
+  /** USDT 名义价值；字段名保留以兼容既有配置快照。 */
   mainGridPortionSize: number;
+  mainGridPortionValue?: number;
   leverage: number;
   stopLossGridCount: number;
   stopLossGridStep: number;
@@ -793,7 +796,7 @@ export class GridBotRunner {
 
   /** 网格满仓上限（基础资产数量）。策略合法的"补到目标"单永不超过它。 */
   private maxPositionSizeFromGrid(): number {
-    return this.config.mainGridCount * this.config.mainGridPortionSize;
+    return mainGridCumulativeQuantity(this.buildTargetPositionConfig(), this.config.mainGridCount);
   }
 
   /** 加仓方向：LONG 的 BUY / SHORT 的 SELL。 */
@@ -809,7 +812,10 @@ export class GridBotRunner {
    */
   private isInitialEntryBuild(side: 'BUY' | 'SELL', preOrderPosition: number): boolean {
     if (!this.isPositionIncreasingOrder(side)) return false;
-    const flatEps = Math.max(this.config.mainGridPortionSize * 0.5, 1e-8);
+    const referencePrice = this.lastPrice > 0
+      ? this.lastPrice
+      : (this.config.entryPrice && this.config.entryPrice > 0 ? this.config.entryPrice : this.config.takeProfitPrice);
+    const flatEps = Math.max((this.config.mainGridPortionValue ?? this.config.mainGridPortionSize) / Math.max(referencePrice, 1) * 0.5, 1e-8);
     return Math.abs(preOrderPosition) <= flatEps;
   }
 
@@ -1716,6 +1722,7 @@ export class GridBotRunner {
       mainGridCount: this.config.mainGridCount,
       mainGridStep: this.config.mainGridStep,
       mainGridPortionSize: this.config.mainGridPortionSize,
+      mainGridPortionValue: this.config.mainGridPortionValue,
       direction: this.config.direction as 'LONG' | 'SHORT',
       reorderThreshold: this.config.reorderThreshold,
       stopLossGridCount: this.config.stopLossGridCount,
@@ -1733,6 +1740,7 @@ export class GridBotRunner {
       mainGridCount: this.config.mainGridCount,
       mainGridStep: this.config.mainGridStep,
       mainGridPortionSize: this.config.mainGridPortionSize,
+      mainGridPortionValue: this.config.mainGridPortionValue,
       stopLossGridCount: this.config.stopLossGridCount,
       stopLossGridStep: this.config.stopLossGridStep,
       isolationStep: this.config.isolationStep,
